@@ -178,6 +178,7 @@ export default function ChatPage() {
         }
 
         const roomsWithDetails = await Promise.all(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           roomMemberships.map(async (membership: any) => {
             const room = membership.chat_rooms;
             if (room.is_group) {
@@ -481,6 +482,7 @@ export default function ChatPage() {
 
       let existingRoomId = null;
       for (const room of potentialRooms) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const memberIds = room.room_members.map((m: any) => m.user_id);
         if (
           memberIds.length === 2 &&
