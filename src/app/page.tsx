@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 "use client";
 
 import { useEffect, useState } from "react";
@@ -190,7 +191,7 @@ export default function ChatPage() {
           content,
           created_at,
           sender_id,
-          profiles (
+          profiles!messages_sender_id_fkey (
             id,
             username,
             avatar_url
@@ -200,8 +201,15 @@ export default function ChatPage() {
         .eq("room_id", selectedRoom.id)
         .order("created_at", { ascending: true });
 
-      if (!error) {
-        setMessages(data || []);
+      if (!error && data) {
+        // Type assertion to ensure correct structure
+        const typedMessages = data.map((msg) => ({
+          ...msg,
+          profiles: Array.isArray(msg.profiles)
+            ? msg.profiles[0]
+            : msg.profiles,
+        })) as Message[];
+        setMessages(typedMessages);
       } else {
         console.error("Error loading messages:", error.message);
       }
@@ -230,7 +238,7 @@ export default function ChatPage() {
               content,
               created_at,
               sender_id,
-              profiles (
+              profiles!messages_sender_id_fkey (
                 id,
                 username,
                 avatar_url
@@ -241,7 +249,15 @@ export default function ChatPage() {
             .single();
 
           if (newMessage) {
-            setMessages((prev) => [...prev, newMessage]);
+            // Ensure profiles is a single object, not an array
+            const typedMessage = {
+              ...newMessage,
+              profiles: Array.isArray(newMessage.profiles)
+                ? newMessage.profiles[0]
+                : newMessage.profiles,
+            } as Message;
+
+            setMessages((prev) => [...prev, typedMessage]);
           }
         },
       )
