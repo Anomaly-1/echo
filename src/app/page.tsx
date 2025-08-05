@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 "use client";
 
 import { useEffect, useState } from "react";
@@ -128,6 +127,7 @@ export default function ChatPage() {
       if (!roomMemberships) return;
 
       const roomsWithDetails = await Promise.all(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         roomMemberships.map(async (membership: any) => {
           const room = membership.chat_rooms;
 
