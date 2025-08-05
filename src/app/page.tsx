@@ -1,6 +1,5 @@
 "use client";
-
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Send,
   MoreVertical,
@@ -11,6 +10,7 @@ import {
   MessageCircle,
   Search,
   X,
+  Loader2,
 } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
@@ -33,6 +33,7 @@ const theme = {
       blue: "#007BFF",
       green: "#10B981",
       gray: "#6B7280",
+      red: "#EF4444",
     },
     background: {
       chat: "#F9FAFB",
@@ -68,13 +69,18 @@ interface Message {
 
 export default function ChatPage() {
   const supabase = createClientComponentClient();
-
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [message, setMessage] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
+
+  // Loading states
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [creatingDM, setCreatingDM] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
 
   // Modal states
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -84,141 +90,252 @@ export default function ChatPage() {
   const [groupName, setGroupName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
+  const messagesEndRef = useRef<HTMLDivElement>(null); // For auto-scrolling
+
+  // Scroll to bottom of messages
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
   // Get logged in user ID and profile
   useEffect(() => {
     const getUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (data.user) {
-        setUserId(data.user.id);
-
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        setUserId(user.id);
         // Get user profile
-        const { data: profile } = await supabase
+        const { data: profile, error } = await supabase
           .from("profiles")
           .select("*")
-          .eq("id", data.user.id)
+          .eq("id", user.id)
           .single();
 
-        setCurrentProfile(profile);
+        if (error) {
+          console.error("Error fetching profile:", error);
+        } else {
+          setCurrentProfile(profile);
+        }
+
+        // Update last_seen for presence
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({ last_seen: new Date().toISOString() })
+          .eq("id", user.id);
+
+        if (updateError) {
+          console.error("Error updating last_seen:", updateError);
+        }
       }
     };
     getUser();
-  }, [supabase]);
+
+    // Set up an interval to periodically update last_seen
+    const presenceInterval = setInterval(async () => {
+      if (userId) {
+        const { error } = await supabase
+          .from("profiles")
+          .update({ last_seen: new Date().toISOString() })
+          .eq("id", userId);
+        if (error) {
+          console.error("Error updating presence:", error);
+          // If error is due to session, might need to re-auth
+        }
+      }
+    }, 60000); // Update every minute
+
+    return () => clearInterval(presenceInterval);
+  }, [supabase, userId]);
 
   // Load rooms for the logged in user
   useEffect(() => {
     if (!userId) return;
 
     const loadRooms = async () => {
-      const { data: roomMemberships } = await supabase
-        .from("room_members")
-        .select(
-          `
-          room_id,
-          chat_rooms (
-            id,
-            name,
-            is_group,
-            created_at
+      setRoomsLoading(true);
+      try {
+        const { data: roomMemberships, error } = await supabase
+          .from("room_members")
+          .select(
+            `
+            room_id,
+            chat_rooms (
+              id,
+              name,
+              is_group,
+              created_at
+            )
+          `,
           )
-        `,
-        )
-        .eq("user_id", userId);
+          .eq("user_id", userId);
 
-      if (!roomMemberships) return;
+        if (error) throw error;
 
-      const roomsWithDetails = await Promise.all(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        roomMemberships.map(async (membership: any) => {
-          const room = membership.chat_rooms;
+        if (!roomMemberships) {
+          setRooms([]);
+          return;
+        }
 
-          if (room.is_group) {
-            // For group chats, get member count
-            const { count } = await supabase
-              .from("room_members")
-              .select("*", { count: "exact", head: true })
-              .eq("room_id", room.id);
+        const roomsWithDetails = await Promise.all(
+          roomMemberships.map(async (membership: any) => {
+            const room = membership.chat_rooms;
+            if (room.is_group) {
+              // For group chats, get member count
+              const { count, error: countError } = await supabase
+                .from("room_members")
+                .select("*", { count: "exact", head: true })
+                .eq("room_id", room.id);
 
-            return {
-              ...room,
-              member_count: count || 0,
-            };
-          } else {
-            // For direct messages, get the other user's info
-            const { data: otherMember } = await supabase
-              .from("room_members")
-              .select(
-                `
-                user_id,
-                profiles (
-                  id,
-                  username,
-                  avatar_url,
-                  last_seen
+              if (countError)
+                console.error("Error fetching member count:", countError);
+
+              return {
+                ...room,
+                member_count: count || 0,
+              };
+            } else {
+              // For direct messages, get the other user's info
+              const { data: otherMember, error: memberError } = await supabase
+                .from("room_members")
+                .select(
+                  `
+                  user_id,
+                  profiles (
+                    id,
+                    username,
+                    avatar_url,
+                    last_seen
+                  )
+                `,
                 )
-              `,
-              )
-              .eq("room_id", room.id)
-              .neq("user_id", userId)
-              .single();
+                .eq("room_id", room.id)
+                .neq("user_id", userId) // Get the *other* user
+                .single();
 
-            return {
-              ...room,
-              other_user: otherMember?.profiles,
-            };
-          }
-        }),
-      );
+              if (memberError)
+                console.error("Error fetching other user:", memberError);
 
-      setRooms(roomsWithDetails);
-      if (roomsWithDetails.length > 0) {
-        setSelectedRoom(roomsWithDetails[0]);
+              return {
+                ...room,
+                other_user: otherMember?.profiles,
+              };
+            }
+          }),
+        );
+
+        // Sort rooms by latest message
+        const sortedRooms = [...roomsWithDetails].sort((a, b) => {
+          // You would ideally fetch the latest message timestamp for each room
+          // and sort by that. For now, sorting by room creation.
+          return (
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+        });
+
+        setRooms(sortedRooms);
+        if (sortedRooms.length > 0 && !selectedRoom) {
+          setSelectedRoom(sortedRooms[0]);
+        }
+      } catch (error) {
+        console.error("Error loading rooms:", error);
+        setRooms([]); // Ensure rooms is an empty array on error
+      } finally {
+        setRoomsLoading(false);
       }
     };
 
     loadRooms();
-  }, [userId, supabase]);
+
+    // Subscribe to room changes (new rooms, member changes)
+    const roomSubscription = supabase
+      .channel("room_changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "room_members",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          console.log("New room membership:", payload);
+          // Reload rooms when a user is added to a new room
+          loadRooms();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "room_members",
+        },
+        (payload) => {
+          console.log("Room member updated:", payload);
+          // Could update member count or handle member status changes
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(roomSubscription);
+    };
+  }, [userId, supabase, selectedRoom]); // Add selectedRoom to dependency to avoid stale closure
 
   // Load messages for selected room + subscribe to new messages
   useEffect(() => {
-    if (!selectedRoom) return;
+    if (!selectedRoom) {
+      setMessages([]);
+      return;
+    }
 
     const loadMessages = async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select(
-          `
-          id,
-          content,
-          created_at,
-          sender_id,
-          profiles!messages_sender_id_fkey (
+      setMessagesLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("messages")
+          .select(
+            `
             id,
-            username,
-            avatar_url
+            content,
+            created_at,
+            sender_id,
+            profiles!messages_sender_id_fkey (
+              id,
+              username,
+              avatar_url
+            )
+          `,
           )
-        `,
-        )
-        .eq("room_id", selectedRoom.id)
-        .order("created_at", { ascending: true });
+          .eq("room_id", selectedRoom.id)
+          .order("created_at", { ascending: true });
 
-      if (!error && data) {
-        // Type assertion to ensure correct structure
-        const typedMessages = data.map((msg) => ({
-          ...msg,
-          profiles: Array.isArray(msg.profiles)
-            ? msg.profiles[0]
-            : msg.profiles,
-        })) as Message[];
-        setMessages(typedMessages);
-      } else {
-        console.error("Error loading messages:", error.message);
+        if (error) throw error;
+
+        if (data) {
+          const typedMessages = data.map((msg) => ({
+            ...msg,
+            profiles: Array.isArray(msg.profiles)
+              ? msg.profiles[0]
+              : msg.profiles,
+          })) as Message[];
+          setMessages(typedMessages);
+        }
+      } catch (error) {
+        console.error("Error loading messages:", error);
+        setMessages([]);
+      } finally {
+        setMessagesLoading(false);
+        // Scroll to bottom after messages load
+        setTimeout(scrollToBottom, 100);
       }
     };
 
     loadMessages();
 
     // Subscribe to new messages in this room
-    const channel = supabase
+    const messageSubscription = supabase
       .channel(`room-${selectedRoom.id}`)
       .on(
         "postgres_changes",
@@ -230,7 +347,7 @@ export default function ChatPage() {
         },
         async (payload) => {
           // Fetch the complete message with profile info
-          const { data: newMessage } = await supabase
+          const { data: newMessage, error } = await supabase
             .from("messages")
             .select(
               `
@@ -248,167 +365,222 @@ export default function ChatPage() {
             .eq("id", payload.new.id)
             .single();
 
+          if (error) {
+            console.error("Error fetching new message:", error);
+            return;
+          }
+
           if (newMessage) {
-            // Ensure profiles is a single object, not an array
             const typedMessage = {
               ...newMessage,
               profiles: Array.isArray(newMessage.profiles)
                 ? newMessage.profiles[0]
                 : newMessage.profiles,
             } as Message;
-
             setMessages((prev) => [...prev, typedMessage]);
+            // Scroll to bottom when new message arrives
+            setTimeout(scrollToBottom, 100);
           }
         },
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(messageSubscription);
     };
   }, [selectedRoom, supabase]);
 
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
   // Load available users for new chats
   const loadAvailableUsers = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, username, avatar_url, last_seen")
       .neq("id", userId)
       .order("username");
 
-    setAvailableUsers(data || []);
+    if (error) {
+      console.error("Error loading users:", error);
+      setAvailableUsers([]);
+    } else {
+      setAvailableUsers(data || []);
+    }
   };
 
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedRoom || !userId) return;
 
-    const { error } = await supabase.from("messages").insert([
-      {
-        room_id: selectedRoom.id,
-        sender_id: userId,
-        content: message.trim(),
-      },
-    ]);
+    const tempMessage: Message = {
+      id: `temp-${Date.now()}`,
+      content: message.trim(),
+      sender_id: userId,
+      created_at: new Date().toISOString(),
+      profiles: currentProfile || { id: userId, username: "You" }, // Fallback
+    };
 
-    if (error) {
-      console.error("Send message error:", error.message);
-    } else {
-      setMessage("");
+    // Optimistically add message to UI
+    setMessages((prev) => [...prev, tempMessage]);
+    setMessage("");
+    scrollToBottom();
+
+    try {
+      const { error } = await supabase.from("messages").insert([
+        {
+          room_id: selectedRoom.id,
+          sender_id: userId,
+          content: message.trim(),
+        },
+      ]);
+
+      if (error) throw error;
+      // Message will be replaced by the real-time subscription
+    } catch (error) {
+      console.error("Send message error:", error);
+      // Remove temp message and show error
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempMessage.id));
+      alert("Failed to send message. Please try again.");
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Prevent new line in textarea if used
       handleSendMessage();
     }
   };
 
   const createDirectMessage = async (otherUserId: string) => {
-    // Check if DM already exists
-    const { data: existingRoom } = await supabase
-      .from("room_members")
-      .select(
-        `
-        room_id,
-        chat_rooms!inner (
-          id,
-          is_group
+    if (creatingDM) return; // Prevent double clicks
+    setCreatingDM(true);
+
+    try {
+      // Check if DM already exists by finding a room where:
+      // 1. It's not a group chat
+      // 2. Current user is a member
+      // 3. The other user is also a member
+      // 4. Only 2 members exist
+
+      const { data: potentialRooms, error: roomsError } = await supabase
+        .from("chat_rooms")
+        .select(
+          `
+                id,
+                is_group,
+                room_members (
+                    user_id
+                )
+            `,
         )
-      `,
-      )
-      .eq("user_id", userId)
-      .eq("chat_rooms.is_group", false);
+        .eq("is_group", false);
 
-    if (existingRoom) {
-      for (const room of existingRoom) {
-        const { data: otherMember } = await supabase
-          .from("room_members")
-          .select("user_id")
-          .eq("room_id", room.room_id)
-          .eq("user_id", otherUserId)
-          .single();
+      if (roomsError) throw roomsError;
 
-        if (otherMember) {
-          // Room already exists, select it
-          const existingRoomDetails = rooms.find((r) => r.id === room.room_id);
-          if (existingRoomDetails) {
-            setSelectedRoom(existingRoomDetails);
-            setShowNewChatModal(false);
-            return;
-          }
+      let existingRoomId = null;
+      for (const room of potentialRooms) {
+        const memberIds = room.room_members.map((m: any) => m.user_id);
+        if (
+          memberIds.length === 2 &&
+          memberIds.includes(userId!) &&
+          memberIds.includes(otherUserId)
+        ) {
+          existingRoomId = room.id;
+          break;
         }
       }
+
+      if (existingRoomId) {
+        // Room already exists, select it
+        const existingRoomDetails = rooms.find((r) => r.id === existingRoomId);
+        if (existingRoomDetails) {
+          setSelectedRoom(existingRoomDetails);
+          setShowNewChatModal(false);
+          setCreatingDM(false);
+          return;
+        }
+      }
+
+      // Create new DM room
+      const { data: newRoom, error: roomError } = await supabase
+        .from("chat_rooms")
+        .insert([{ is_group: false }])
+        .select()
+        .single();
+
+      if (roomError) throw roomError;
+
+      // Add both users to the room
+      const { error: membersError } = await supabase
+        .from("room_members")
+        .insert([
+          { room_id: newRoom.id, user_id: userId },
+          { room_id: newRoom.id, user_id: otherUserId },
+        ]);
+
+      if (membersError) throw membersError;
+
+      // Refresh rooms list is handled by subscription
+      setShowNewChatModal(false);
+    } catch (error) {
+      console.error("Error creating DM:", error);
+      alert("Failed to create chat. Please try again.");
+    } finally {
+      setCreatingDM(false);
     }
-
-    // Create new DM room
-    const { data: newRoom, error: roomError } = await supabase
-      .from("chat_rooms")
-      .insert([{ is_group: false }])
-      .select()
-      .single();
-
-    if (roomError) {
-      console.error("Error creating room:", roomError);
-      return;
-    }
-
-    // Add both users to the room
-    const { error: membersError } = await supabase.from("room_members").insert([
-      { room_id: newRoom.id, user_id: userId },
-      { room_id: newRoom.id, user_id: otherUserId },
-    ]);
-
-    if (membersError) {
-      console.error("Error adding members:", membersError);
-      return;
-    }
-
-    // Refresh rooms list
-    window.location.reload();
   };
 
   const createGroupChat = async () => {
-    if (!groupName.trim() || selectedUsers.length === 0) return;
-
-    const { data: newRoom, error: roomError } = await supabase
-      .from("chat_rooms")
-      .insert([
-        {
-          name: groupName.trim(),
-          is_group: true,
-        },
-      ])
-      .select()
-      .single();
-
-    if (roomError) {
-      console.error("Error creating group:", roomError);
+    if (
+      creatingGroup ||
+      !groupName.trim() ||
+      selectedUsers.length === 0 ||
+      !userId
+    )
       return;
+    setCreatingGroup(true);
+
+    try {
+      const { data: newRoom, error: roomError } = await supabase
+        .from("chat_rooms")
+        .insert([
+          {
+            name: groupName.trim(),
+            is_group: true,
+          },
+        ])
+        .select()
+        .single();
+
+      if (roomError) throw roomError;
+
+      // Add all selected users plus current user to the room
+      const memberInserts = [
+        { room_id: newRoom.id, user_id: userId },
+        ...selectedUsers.map((uId) => ({
+          room_id: newRoom.id,
+          user_id: uId,
+        })),
+      ];
+
+      const { error: membersError } = await supabase
+        .from("room_members")
+        .insert(memberInserts);
+
+      if (membersError) throw membersError;
+
+      // Refresh rooms list is handled by subscription
+      setGroupName("");
+      setSelectedUsers([]);
+      setShowNewGroupModal(false);
+    } catch (error) {
+      console.error("Error creating group:", error);
+      alert("Failed to create group. Please try again.");
+    } finally {
+      setCreatingGroup(false);
     }
-
-    // Add all selected users plus current user to the room
-    const memberInserts = [
-      { room_id: newRoom.id, user_id: userId },
-      ...selectedUsers.map((userId) => ({
-        room_id: newRoom.id,
-        user_id: userId,
-      })),
-    ];
-
-    const { error: membersError } = await supabase
-      .from("room_members")
-      .insert(memberInserts);
-
-    if (membersError) {
-      console.error("Error adding members:", membersError);
-      return;
-    }
-
-    // Reset form and refresh
-    setGroupName("");
-    setSelectedUsers([]);
-    setShowNewGroupModal(false);
-    window.location.reload();
   };
 
   const filteredUsers = availableUsers.filter((user) =>
@@ -459,8 +631,13 @@ export default function ChatPage() {
                 }}
                 style={{ color: theme.colors.text.light }}
                 title="New Direct Message"
+                disabled={roomsLoading}
               >
-                <MessageCircle size={20} />
+                {roomsLoading ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <MessageCircle size={20} />
+                )}
               </button>
               <button
                 onClick={() => {
@@ -469,75 +646,88 @@ export default function ChatPage() {
                 }}
                 style={{ color: theme.colors.text.light }}
                 title="New Group Chat"
+                disabled={roomsLoading}
               >
-                <Users size={20} />
+                {roomsLoading ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <Users size={20} />
+                )}
               </button>
               <button style={{ color: theme.colors.text.light }}>
                 <MoreVertical size={20} />
               </button>
             </div>
           </div>
-
           {/* Rooms List */}
           <div className="flex-grow overflow-y-auto -mr-6 pr-4 space-y-2">
-            {rooms.map((room) => (
-              <div
-                key={room.id}
-                onClick={() => setSelectedRoom(room)}
-                className={`flex items-center p-3 rounded-xl cursor-pointer transition-colors ${
-                  selectedRoom?.id === room.id
-                    ? "bg-black bg-opacity-30"
-                    : "hover:bg-black hover:bg-opacity-10"
-                }`}
-              >
-                <div
-                  className="w-10 h-10 rounded-full mr-4 flex items-center justify-center"
-                  style={{ backgroundColor: theme.colors.accent.gray }}
-                >
-                  {room.is_group ? (
-                    <Users
-                      size={16}
-                      style={{ color: theme.colors.text.light }}
-                    />
-                  ) : (
-                    <div
-                      className="w-6 h-6 rounded-full"
-                      style={{ backgroundColor: theme.colors.text.light }}
-                    />
-                  )}
-                </div>
-                <div className="flex-grow">
-                  <h3
-                    className="font-semibold"
-                    style={{ color: theme.colors.text.light }}
-                  >
-                    {room.is_group
-                      ? room.name
-                      : room.other_user?.username || "Unknown User"}
-                  </h3>
-                  {room.is_group && (
-                    <p
-                      className="text-xs"
-                      style={{ color: theme.colors.text.mutedLight }}
-                    >
-                      {room.member_count} members
-                    </p>
-                  )}
-                </div>
-                <Diamond
-                  size={8}
-                  style={{
-                    color: room.is_group
-                      ? theme.colors.accent.blue
-                      : isUserOnline(room.other_user?.last_seen)
-                        ? theme.colors.accent.green
-                        : theme.colors.text.mutedLight,
-                  }}
+            {roomsLoading ? (
+              <div className="flex justify-center items-center h-full">
+                <Loader2
+                  className="animate-spin"
+                  style={{ color: theme.colors.text.light }}
                 />
               </div>
-            ))}
-
-            {rooms.length === 0 && (
+            ) : rooms.length > 0 ? (
+              rooms.map((room) => (
+                <div
+                  key={room.id}
+                  onClick={() => setSelectedRoom(room)}
+                  className={`flex items-center p-3 rounded-xl cursor-pointer transition-colors ${
+                    selectedRoom?.id === room.id
+                      ? "bg-black bg-opacity-30"
+                      : "hover:bg-black hover:bg-opacity-10"
+                  }`}
+                >
+                  <div
+                    className="w-10 h-10 rounded-full mr-4 flex items-center justify-center"
+                    style={{ backgroundColor: theme.colors.accent.gray }}
+                  >
+                    {room.is_group ? (
+                      <Users
+                        size={16}
+                        style={{ color: theme.colors.text.light }}
+                      />
+                    ) : (
+                      <div
+                        className="w-6 h-6 rounded-full"
+                        style={{ backgroundColor: theme.colors.text.light }}
+                      />
+                    )}
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    {" "}
+                    {/* min-w-0 prevents flex issues */}
+                    <h3
+                      className="font-semibold truncate"
+                      style={{ color: theme.colors.text.light }}
+                    >
+                      {room.is_group
+                        ? room.name
+                        : room.other_user?.username || "Unknown User"}
+                    </h3>
+                    {room.is_group && (
+                      <p
+                        className="text-xs truncate"
+                        style={{ color: theme.colors.text.mutedLight }}
+                      >
+                        {room.member_count} members
+                      </p>
+                    )}
+                  </div>
+                  <Diamond
+                    size={8}
+                    style={{
+                      color: room.is_group
+                        ? theme.colors.accent.blue
+                        : isUserOnline(room.other_user?.last_seen)
+                          ? theme.colors.accent.green
+                          : theme.colors.text.mutedLight,
+                    }}
+                  />
+                </div>
+              ))
+            ) : (
               <div className="text-center py-8">
                 <p style={{ color: theme.colors.text.mutedLight }}>
                   No chats yet. Start a conversation!
@@ -546,7 +736,6 @@ export default function ChatPage() {
             )}
           </div>
         </div>
-
         {/* Main Chat Area */}
         <div
           className="w-2/3 flex flex-col"
@@ -577,7 +766,7 @@ export default function ChatPage() {
                 </div>
                 <div>
                   <h2
-                    className="font-bold text-lg"
+                    className="font-bold text-lg truncate max-w-xs"
                     style={{ color: theme.colors.text.dark }}
                   >
                     {selectedRoom.is_group
@@ -607,78 +796,85 @@ export default function ChatPage() {
             </div>
           ) : (
             <div
-              className="p-4 flex items-center justify-center"
-              style={{ backgroundColor: theme.colors.background.white }}
+              className="p-4 flex items-center justify-center h-full"
+              style={{ backgroundColor: theme.colors.background.chat }}
             >
               <p style={{ color: theme.colors.text.muted }}>
                 Select a chat to start messaging
               </p>
             </div>
           )}
-
           {/* Messages Area */}
           <div
             className="flex-grow p-6 overflow-y-auto"
             style={{ backgroundColor: theme.colors.background.chat }}
           >
-            {selectedRoom &&
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex mb-4 ${
-                    msg.sender_id === userId ? "justify-end" : "justify-start"
-                  }`}
-                >
+            {selectedRoom && messagesLoading ? (
+              <div className="flex justify-center items-center h-full">
+                <Loader2
+                  className="animate-spin"
+                  style={{ color: theme.colors.text.muted }}
+                />
+              </div>
+            ) : selectedRoom ? (
+              <>
+                {messages.map((msg) => (
                   <div
-                    className={`rounded-t-2xl p-4 max-w-md shadow-sm ${
-                      msg.sender_id === userId
-                        ? "rounded-bl-2xl"
-                        : "rounded-br-2xl"
-                    }`}
-                    style={{
-                      backgroundColor:
-                        msg.sender_id === userId
-                          ? theme.colors.primary.dark
-                          : theme.colors.background.white,
-                    }}
+                    key={msg.id}
+                    className={`flex mb-4 ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
                   >
-                    {msg.sender_id !== userId && selectedRoom.is_group && (
+                    <div
+                      className={`rounded-t-2xl p-4 max-w-md shadow-sm ${
+                        msg.sender_id === userId
+                          ? "rounded-bl-2xl"
+                          : "rounded-br-2xl"
+                      }`}
+                      style={{
+                        backgroundColor:
+                          msg.sender_id === userId
+                            ? theme.colors.primary.dark
+                            : theme.colors.background.white,
+                      }}
+                    >
+                      {msg.sender_id !== userId && selectedRoom.is_group && (
+                        <p
+                          className="text-xs font-semibold mb-1 truncate max-w-[200px]"
+                          style={{ color: theme.colors.accent.blue }}
+                        >
+                          {msg.profiles.username}
+                        </p>
+                      )}
                       <p
-                        className="text-xs font-semibold mb-1"
-                        style={{ color: theme.colors.accent.blue }}
+                        style={{
+                          color:
+                            msg.sender_id === userId
+                              ? theme.colors.text.light
+                              : theme.colors.text.dark,
+                        }}
                       >
-                        {msg.profiles.username}
+                        {msg.content}
                       </p>
-                    )}
-                    <p
-                      style={{
-                        color:
-                          msg.sender_id === userId
-                            ? theme.colors.text.light
-                            : theme.colors.text.dark,
-                      }}
-                    >
-                      {msg.content}
-                    </p>
-                    <span
-                      className="text-xs float-right mt-1"
-                      style={{
-                        color:
-                          msg.sender_id === userId
-                            ? theme.colors.text.mutedLight
-                            : theme.colors.text.muted,
-                      }}
-                    >
-                      {new Date(msg.created_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
+                      <span
+                        className="text-xs float-right mt-1"
+                        style={{
+                          color:
+                            msg.sender_id === userId
+                              ? theme.colors.text.mutedLight
+                              : theme.colors.text.muted,
+                        }}
+                      >
+                        {new Date(msg.created_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+                <div ref={messagesEndRef} /> {/* Invisible div for scrolling */}
+              </>
+            ) : null}
           </div>
-
           {/* Message Input */}
           {selectedRoom && (
             <div
@@ -689,6 +885,7 @@ export default function ChatPage() {
               }}
             >
               <div className="flex items-center space-x-3">
+                {/* <Plus size={20} style={{ color: theme.colors.text.muted }} className="cursor-pointer" /> */}
                 <input
                   type="text"
                   value={message}
@@ -700,14 +897,16 @@ export default function ChatPage() {
                     color: theme.colors.text.dark,
                   }}
                   placeholder="Type a message..."
+                  disabled={!selectedRoom} // Disable if no room selected (shouldn't happen)
                 />
                 <button
                   onClick={handleSendMessage}
-                  className="p-3 rounded-full hover:opacity-80 transition-opacity"
+                  className="p-3 rounded-full hover:opacity-80 transition-opacity disabled:opacity-50"
                   style={{
                     backgroundColor: theme.colors.primary.dark,
                     color: theme.colors.text.light,
                   }}
+                  disabled={!message.trim() || !selectedRoom}
                 >
                   <Send size={20} />
                 </button>
@@ -716,12 +915,11 @@ export default function ChatPage() {
           )}
         </div>
       </div>
-
       {/* New Direct Message Modal */}
       {showNewChatModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div
-            className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-hidden"
+            className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-hidden flex flex-col"
             style={{ backgroundColor: theme.colors.background.white }}
           >
             <div className="flex justify-between items-center mb-4">
@@ -731,11 +929,13 @@ export default function ChatPage() {
               >
                 Start New Chat
               </h3>
-              <button onClick={() => setShowNewChatModal(false)}>
+              <button
+                onClick={() => setShowNewChatModal(false)}
+                disabled={creatingDM}
+              >
                 <X size={20} style={{ color: theme.colors.text.muted }} />
               </button>
             </div>
-
             <div className="mb-4">
               <input
                 type="text"
@@ -750,46 +950,53 @@ export default function ChatPage() {
                 }}
               />
             </div>
-
-            <div className="max-h-48 overflow-y-auto">
-              {filteredUsers.map((user) => (
-                <div
-                  key={user.id}
-                  onClick={() => createDirectMessage(user.id)}
-                  className="flex items-center p-2 hover:bg-gray-100 rounded cursor-pointer"
-                >
+            <div className="flex-grow overflow-y-auto min-h-0">
+              {" "}
+              {/* min-h-0 for flex scrolling */}
+              {filteredUsers.length > 0 ? (
+                filteredUsers.map((user) => (
                   <div
-                    className="w-8 h-8 rounded-full mr-3 flex items-center justify-center"
-                    style={{ backgroundColor: theme.colors.accent.gray }}
+                    key={user.id}
+                    onClick={() => createDirectMessage(user.id)}
+                    className="flex items-center p-2 hover:bg-gray-100 rounded cursor-pointer"
                   >
                     <div
-                      className="w-5 h-5 rounded-full"
-                      style={{ backgroundColor: theme.colors.text.light }}
-                    />
-                  </div>
-                  <div className="flex-grow">
-                    <p style={{ color: theme.colors.text.dark }}>
-                      {user.username}
-                    </p>
-                    <p
-                      className="text-xs"
-                      style={{ color: theme.colors.text.muted }}
+                      className="w-8 h-8 rounded-full mr-3 flex items-center justify-center"
+                      style={{ backgroundColor: theme.colors.accent.gray }}
                     >
-                      {isUserOnline(user.last_seen) ? "Online" : "Offline"}
-                    </p>
+                      <div
+                        className="w-5 h-5 rounded-full"
+                        style={{ backgroundColor: theme.colors.text.light }}
+                      />
+                    </div>
+                    <div className="flex-grow min-w-0">
+                      <p
+                        className="truncate"
+                        style={{ color: theme.colors.text.dark }}
+                      >
+                        {user.username}
+                      </p>
+                      <p
+                        className="text-xs truncate"
+                        style={{ color: theme.colors.text.muted }}
+                      >
+                        {isUserOnline(user.last_seen) ? "Online" : "Offline"}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-center text-gray-500 py-4">No users found</p>
+              )}
             </div>
           </div>
         </div>
       )}
-
       {/* New Group Chat Modal */}
       {showNewGroupModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div
-            className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-hidden"
+            className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-hidden flex flex-col"
             style={{ backgroundColor: theme.colors.background.white }}
           >
             <div className="flex justify-between items-center mb-4">
@@ -799,11 +1006,13 @@ export default function ChatPage() {
               >
                 Create Group Chat
               </h3>
-              <button onClick={() => setShowNewGroupModal(false)}>
+              <button
+                onClick={() => setShowNewGroupModal(false)}
+                disabled={creatingGroup}
+              >
                 <X size={20} style={{ color: theme.colors.text.muted }} />
               </button>
             </div>
-
             <div className="mb-4">
               <input
                 type="text"
@@ -816,6 +1025,7 @@ export default function ChatPage() {
                   borderColor: theme.colors.primary.medium,
                   color: theme.colors.text.dark,
                 }}
+                disabled={creatingGroup}
               />
               <input
                 type="text"
@@ -828,52 +1038,67 @@ export default function ChatPage() {
                   borderColor: theme.colors.primary.medium,
                   color: theme.colors.text.dark,
                 }}
+                disabled={creatingGroup}
               />
             </div>
-
-            <div className="max-h-32 overflow-y-auto mb-4">
-              {filteredUsers.map((user) => (
-                <div
-                  key={user.id}
-                  onClick={() => {
-                    setSelectedUsers((prev) =>
-                      prev.includes(user.id)
-                        ? prev.filter((id) => id !== user.id)
-                        : [...prev, user.id],
-                    );
-                  }}
-                  className={`flex items-center p-2 rounded cursor-pointer ${
-                    selectedUsers.includes(user.id)
-                      ? "bg-blue-100"
-                      : "hover:bg-gray-100"
-                  }`}
-                >
+            <div className="flex-grow overflow-y-auto mb-4 min-h-0">
+              {filteredUsers.length > 0 ? (
+                filteredUsers.map((user) => (
                   <div
-                    className="w-8 h-8 rounded-full mr-3 flex items-center justify-center"
-                    style={{ backgroundColor: theme.colors.accent.gray }}
+                    key={user.id}
+                    onClick={() => {
+                      setSelectedUsers((prev) =>
+                        prev.includes(user.id)
+                          ? prev.filter((id) => id !== user.id)
+                          : [...prev, user.id],
+                      );
+                    }}
+                    className={`flex items-center p-2 rounded cursor-pointer ${
+                      selectedUsers.includes(user.id)
+                        ? "bg-blue-100"
+                        : "hover:bg-gray-100"
+                    }`}
                   >
                     <div
-                      className="w-5 h-5 rounded-full"
-                      style={{ backgroundColor: theme.colors.text.light }}
-                    />
+                      className="w-8 h-8 rounded-full mr-3 flex items-center justify-center"
+                      style={{ backgroundColor: theme.colors.accent.gray }}
+                    >
+                      <div
+                        className="w-5 h-5 rounded-full"
+                        style={{ backgroundColor: theme.colors.text.light }}
+                      />
+                    </div>
+                    <p
+                      className="truncate"
+                      style={{ color: theme.colors.text.dark }}
+                    >
+                      {user.username}
+                    </p>
                   </div>
-                  <p style={{ color: theme.colors.text.dark }}>
-                    {user.username}
-                  </p>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-center text-gray-500 py-4">No users found</p>
+              )}
             </div>
-
             <button
               onClick={createGroupChat}
-              disabled={!groupName.trim() || selectedUsers.length === 0}
-              className="w-full p-2 rounded-lg disabled:opacity-50"
+              disabled={
+                !groupName.trim() || selectedUsers.length === 0 || creatingGroup
+              }
+              className="w-full p-2 rounded-lg disabled:opacity-50 flex items-center justify-center"
               style={{
                 backgroundColor: theme.colors.primary.dark,
                 color: theme.colors.text.light,
               }}
             >
-              Create Group ({selectedUsers.length} members)
+              {creatingGroup ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                `Create Group (${selectedUsers.length} members)`
+              )}
             </button>
           </div>
         </div>
