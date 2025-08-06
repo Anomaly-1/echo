@@ -93,7 +93,9 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Keep track of subscription channels to properly clean them up
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const roomSubscriptionRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messageSubscriptionRef = useRef<any>(null);
 
   // Scroll to bottom of messages
@@ -181,6 +183,7 @@ export default function ChatPage() {
         }
 
         const roomsWithDetails = await Promise.all(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           roomMemberships.map(async (membership: any) => {
             const room = membership.chat_rooms;
             if (room.is_group) {
@@ -529,6 +532,7 @@ export default function ChatPage() {
 
       let existingRoomId = null;
       for (const room of potentialRooms) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const memberIds = room.room_members.map((m: any) => m.user_id);
         if (
           memberIds.length === 2 &&
