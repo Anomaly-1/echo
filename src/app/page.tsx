@@ -90,7 +90,11 @@ export default function ChatPage() {
   const [groupName, setGroupName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const messagesEndRef = useRef<HTMLDivElement>(null); // For auto-scrolling
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Keep track of subscription channels to properly clean them up
+  const roomSubscriptionRef = useRef<any>(null);
+  const messageSubscriptionRef = useRef<any>(null);
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
@@ -140,7 +144,6 @@ export default function ChatPage() {
           .eq("id", userId);
         if (error) {
           console.error("Error updating presence:", error);
-          // If error is due to session, might need to re-auth
         }
       }
     }, 60000); // Update every minute
@@ -178,7 +181,6 @@ export default function ChatPage() {
         }
 
         const roomsWithDetails = await Promise.all(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           roomMemberships.map(async (membership: any) => {
             const room = membership.chat_rooms;
             if (room.is_group) {
@@ -227,8 +229,6 @@ export default function ChatPage() {
 
         // Sort rooms by latest message
         const sortedRooms = [...roomsWithDetails].sort((a, b) => {
-          // You would ideally fetch the latest message timestamp for each room
-          // and sort by that. For now, sorting by room creation.
           return (
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           );
@@ -240,7 +240,7 @@ export default function ChatPage() {
         }
       } catch (error) {
         console.error("Error loading rooms:", error);
-        setRooms([]); // Ensure rooms is an empty array on error
+        setRooms([]);
       } finally {
         setRoomsLoading(false);
       }
@@ -248,9 +248,14 @@ export default function ChatPage() {
 
     loadRooms();
 
+    // Clean up previous subscription
+    if (roomSubscriptionRef.current) {
+      supabase.removeChannel(roomSubscriptionRef.current);
+    }
+
     // Subscribe to room changes (new rooms, member changes)
-    const roomSubscription = supabase
-      .channel("room_changes")
+    roomSubscriptionRef.current = supabase
+      .channel(`user-rooms-${userId}`)
       .on(
         "postgres_changes",
         {
@@ -261,33 +266,43 @@ export default function ChatPage() {
         },
         (payload) => {
           console.log("New room membership:", payload);
-          // Reload rooms when a user is added to a new room
           loadRooms();
         },
       )
       .on(
         "postgres_changes",
         {
-          event: "UPDATE",
+          event: "DELETE",
           schema: "public",
           table: "room_members",
+          filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          console.log("Room member updated:", payload);
-          // Could update member count or handle member status changes
+          console.log("Room membership removed:", payload);
+          loadRooms();
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("Room subscription status:", status);
+      });
 
     return () => {
-      supabase.removeChannel(roomSubscription);
+      if (roomSubscriptionRef.current) {
+        supabase.removeChannel(roomSubscriptionRef.current);
+        roomSubscriptionRef.current = null;
+      }
     };
-  }, [userId, supabase, selectedRoom]); // Add selectedRoom to dependency to avoid stale closure
+  }, [userId, supabase]);
 
   // Load messages for selected room + subscribe to new messages
   useEffect(() => {
     if (!selectedRoom) {
       setMessages([]);
+      // Clean up message subscription when no room is selected
+      if (messageSubscriptionRef.current) {
+        supabase.removeChannel(messageSubscriptionRef.current);
+        messageSubscriptionRef.current = null;
+      }
       return;
     }
 
@@ -328,16 +343,20 @@ export default function ChatPage() {
         setMessages([]);
       } finally {
         setMessagesLoading(false);
-        // Scroll to bottom after messages load
         setTimeout(scrollToBottom, 100);
       }
     };
 
     loadMessages();
 
+    // Clean up previous message subscription
+    if (messageSubscriptionRef.current) {
+      supabase.removeChannel(messageSubscriptionRef.current);
+    }
+
     // Subscribe to new messages in this room
-    const messageSubscription = supabase
-      .channel(`room-${selectedRoom.id}`)
+    messageSubscriptionRef.current = supabase
+      .channel(`messages-${selectedRoom.id}`)
       .on(
         "postgres_changes",
         {
@@ -347,6 +366,8 @@ export default function ChatPage() {
           filter: `room_id=eq.${selectedRoom.id}`,
         },
         async (payload) => {
+          console.log("New message received:", payload);
+
           // Fetch the complete message with profile info
           const { data: newMessage, error } = await supabase
             .from("messages")
@@ -378,16 +399,38 @@ export default function ChatPage() {
                 ? newMessage.profiles[0]
                 : newMessage.profiles,
             } as Message;
-            setMessages((prev) => [...prev, typedMessage]);
-            // Scroll to bottom when new message arrives
+
+            // Only add the message if it's not already in our state
+            setMessages((prev) => {
+              const exists = prev.some((msg) => msg.id === typedMessage.id);
+              if (exists) return prev;
+
+              // Remove any temporary messages with the same content and sender
+              const filteredPrev = prev.filter(
+                (msg) =>
+                  !(
+                    msg.id.startsWith("temp-") &&
+                    msg.sender_id === typedMessage.sender_id &&
+                    msg.content === typedMessage.content
+                  ),
+              );
+
+              return [...filteredPrev, typedMessage];
+            });
+
             setTimeout(scrollToBottom, 100);
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("Message subscription status:", status);
+      });
 
     return () => {
-      supabase.removeChannel(messageSubscription);
+      if (messageSubscriptionRef.current) {
+        supabase.removeChannel(messageSubscriptionRef.current);
+        messageSubscriptionRef.current = null;
+      }
     };
   }, [selectedRoom, supabase]);
 
@@ -415,12 +458,15 @@ export default function ChatPage() {
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedRoom || !userId) return;
 
+    const messageContent = message.trim();
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
+
     const tempMessage: Message = {
-      id: `temp-${Date.now()}`,
-      content: message.trim(),
+      id: tempId,
+      content: messageContent,
       sender_id: userId,
       created_at: new Date().toISOString(),
-      profiles: currentProfile || { id: userId, username: "You" }, // Fallback
+      profiles: currentProfile || { id: userId, username: "You" },
     };
 
     // Optimistically add message to UI
@@ -429,42 +475,43 @@ export default function ChatPage() {
     scrollToBottom();
 
     try {
-      const { error } = await supabase.from("messages").insert([
-        {
-          room_id: selectedRoom.id,
-          sender_id: userId,
-          content: message.trim(),
-        },
-      ]);
+      const { data: insertedMessage, error } = await supabase
+        .from("messages")
+        .insert([
+          {
+            room_id: selectedRoom.id,
+            sender_id: userId,
+            content: messageContent,
+          },
+        ])
+        .select()
+        .single();
 
       if (error) throw error;
-      // Message will be replaced by the real-time subscription
+
+      // The real-time subscription will handle adding the actual message
+      // and removing the temporary one
     } catch (error) {
       console.error("Send message error:", error);
-      // Remove temp message and show error
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempMessage.id));
+      // Remove temp message on error
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
       alert("Failed to send message. Please try again.");
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault(); // Prevent new line in textarea if used
+      e.preventDefault();
       handleSendMessage();
     }
   };
 
   const createDirectMessage = async (otherUserId: string) => {
-    if (creatingDM) return; // Prevent double clicks
+    if (creatingDM) return;
     setCreatingDM(true);
 
     try {
-      // Check if DM already exists by finding a room where:
-      // 1. It's not a group chat
-      // 2. Current user is a member
-      // 3. The other user is also a member
-      // 4. Only 2 members exist
-
+      // Check if DM already exists
       const { data: potentialRooms, error: roomsError } = await supabase
         .from("chat_rooms")
         .select(
@@ -482,7 +529,6 @@ export default function ChatPage() {
 
       let existingRoomId = null;
       for (const room of potentialRooms) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const memberIds = room.room_members.map((m: any) => m.user_id);
         if (
           memberIds.length === 2 &&
@@ -524,7 +570,6 @@ export default function ChatPage() {
 
       if (membersError) throw membersError;
 
-      // Refresh rooms list is handled by subscription
       setShowNewChatModal(false);
     } catch (error) {
       console.error("Error creating DM:", error);
@@ -573,7 +618,6 @@ export default function ChatPage() {
 
       if (membersError) throw membersError;
 
-      // Refresh rooms list is handled by subscription
       setGroupName("");
       setSelectedUsers([]);
       setShowNewGroupModal(false);
@@ -594,6 +638,18 @@ export default function ChatPage() {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     return new Date(lastSeen) > fiveMinutesAgo;
   };
+
+  // Cleanup all subscriptions on component unmount
+  useEffect(() => {
+    return () => {
+      if (roomSubscriptionRef.current) {
+        supabase.removeChannel(roomSubscriptionRef.current);
+      }
+      if (messageSubscriptionRef.current) {
+        supabase.removeChannel(messageSubscriptionRef.current);
+      }
+    };
+  }, [supabase]);
 
   return (
     <div
@@ -698,8 +754,6 @@ export default function ChatPage() {
                     )}
                   </div>
                   <div className="flex-grow min-w-0">
-                    {" "}
-                    {/* min-w-0 prevents flex issues */}
                     <h3
                       className="font-semibold truncate"
                       style={{ color: theme.colors.text.light }}
@@ -830,7 +884,7 @@ export default function ChatPage() {
                         msg.sender_id === userId
                           ? "rounded-bl-2xl"
                           : "rounded-br-2xl"
-                      }`}
+                      } ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
                       style={{
                         backgroundColor:
                           msg.sender_id === userId
@@ -873,7 +927,7 @@ export default function ChatPage() {
                     </div>
                   </div>
                 ))}
-                <div ref={messagesEndRef} /> {/* Invisible div for scrolling */}
+                <div ref={messagesEndRef} />
               </>
             ) : null}
           </div>
@@ -887,7 +941,6 @@ export default function ChatPage() {
               }}
             >
               <div className="flex items-center space-x-3">
-                {/* <Plus size={20} style={{ color: theme.colors.text.muted }} className="cursor-pointer" /> */}
                 <input
                   type="text"
                   value={message}
@@ -899,7 +952,7 @@ export default function ChatPage() {
                     color: theme.colors.text.dark,
                   }}
                   placeholder="Type a message..."
-                  disabled={!selectedRoom} // Disable if no room selected (shouldn't happen)
+                  disabled={!selectedRoom}
                 />
                 <button
                   onClick={handleSendMessage}
@@ -953,8 +1006,6 @@ export default function ChatPage() {
               />
             </div>
             <div className="flex-grow overflow-y-auto min-h-0">
-              {" "}
-              {/* min-h-0 for flex scrolling */}
               {filteredUsers.length > 0 ? (
                 filteredUsers.map((user) => (
                   <div
