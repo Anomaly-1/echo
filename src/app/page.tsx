@@ -13,9 +13,42 @@ import {
   Loader2,
 } from "lucide-react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useRouter } from "next/navigation";
 
 // Theme configuration - easily swappable
-const theme = {
+type Theme = {
+  colors: {
+    primary: {
+      light: string;
+      medium: string;
+      dark: string;
+      darker: string;
+    };
+    text: {
+      light: string;
+      dark: string;
+      muted: string;
+      mutedLight: string;
+    };
+    accent: {
+      blue: string;
+      green: string;
+      gray: string;
+      red: string;
+    };
+    background: {
+      chat: string;
+      white: string;
+      overlay: string;
+    };
+  };
+  styleSettings?: {
+    compact?: boolean;
+    wallpaper?: string | null;
+  };
+};
+
+const defaultTheme: Theme = {
   colors: {
     primary: {
       light: "#F8F9FA",
@@ -41,13 +74,74 @@ const theme = {
       overlay: "rgba(0, 0, 0, 0.3)",
     },
   },
+  styleSettings: {
+    compact: false,
+    wallpaper: null,
+  },
 };
+
+const presetThemes: Array<{ id: string; name: string; theme: Theme }> = [
+  {
+    id: "slate",
+    name: "Slate",
+    theme: defaultTheme,
+  },
+  {
+    id: "ocean",
+    name: "Ocean",
+    theme: {
+      colors: {
+        primary: { light: "#ECFEFF", medium: "#CFFAFE", dark: "#0E7490", darker: "#155E75" },
+        text: { light: "#FFFFFF", dark: "#0F172A", muted: "#64748B", mutedLight: "#94A3B8" },
+        accent: { blue: "#0284C7", green: "#14B8A6", gray: "#6B7280", red: "#EF4444" },
+        background: { chat: "#F0FDFA", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+      },
+    },
+  },
+  {
+    id: "emerald",
+    name: "Emerald",
+    theme: {
+      colors: {
+        primary: { light: "#ECFDF5", medium: "#D1FAE5", dark: "#065F46", darker: "#064E3B" },
+        text: { light: "#FFFFFF", dark: "#052e24", muted: "#6B7280", mutedLight: "#9CA3AF" },
+        accent: { blue: "#10B981", green: "#34D399", gray: "#6B7280", red: "#EF4444" },
+        background: { chat: "#F0FDF4", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+      },
+    },
+  },
+  {
+    id: "violet",
+    name: "Violet",
+    theme: {
+      colors: {
+        primary: { light: "#F5F3FF", medium: "#EDE9FE", dark: "#4C1D95", darker: "#3B0764" },
+        text: { light: "#FFFFFF", dark: "#1F2937", muted: "#6B7280", mutedLight: "#A1A1AA" },
+        accent: { blue: "#7C3AED", green: "#10B981", gray: "#6B7280", red: "#EF4444" },
+        background: { chat: "#FAF5FF", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+      },
+    },
+  },
+  {
+    id: "rose",
+    name: "Rose",
+    theme: {
+      colors: {
+        primary: { light: "#FFF1F2", medium: "#FFE4E6", dark: "#9F1239", darker: "#881337" },
+        text: { light: "#FFFFFF", dark: "#1F2937", muted: "#6B7280", mutedLight: "#9CA3AF" },
+        accent: { blue: "#FB7185", green: "#10B981", gray: "#6B7280", red: "#DC2626" },
+        background: { chat: "#FFF1F2", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+      },
+    },
+  },
+];
 
 interface Profile {
   id: string;
   username: string;
   avatar_url?: string;
   last_seen?: string;
+  theme?: Theme | null;
 }
 
 interface Room {
@@ -69,12 +163,15 @@ interface Message {
 
 export default function ChatPage() {
   const supabase = createClientComponentClient();
+  const router = useRouter();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [message, setMessage] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
+  const [theme, setTheme] = useState<Theme>(defaultTheme);
+  const [showSidebar, setShowSidebar] = useState(true);
 
   // Loading states
   const [roomsLoading, setRoomsLoading] = useState(true);
@@ -85,10 +182,15 @@ export default function ChatPage() {
   // Modal states
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
+  const [showThemeModal, setShowThemeModal] = useState(false);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<Profile[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [groupName, setGroupName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [editUsername, setEditUsername] = useState("");
+  const [editAvatarUrl, setEditAvatarUrl] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -114,7 +216,7 @@ export default function ChatPage() {
         // Get user profile
         const { data: profile, error } = await supabase
           .from("profiles")
-          .select("*")
+          .select("id, username, avatar_url, last_seen, theme")
           .eq("id", user.id)
           .single();
 
@@ -122,6 +224,19 @@ export default function ChatPage() {
           console.error("Error fetching profile:", error);
         } else {
           setCurrentProfile(profile);
+          if (profile?.theme) {
+            try {
+              // If theme stored as object or JSON string
+              const storedTheme = (typeof profile.theme === "string"
+                ? JSON.parse(profile.theme as unknown as string)
+                : profile.theme) as Theme;
+              setTheme(storedTheme);
+            } catch {
+              setTheme(defaultTheme);
+            }
+          }
+          setEditUsername(profile?.username || "");
+          setEditAvatarUrl(profile?.avatar_url || "");
         }
 
         // Update last_seen for presence
@@ -133,6 +248,8 @@ export default function ChatPage() {
         if (updateError) {
           console.error("Error updating last_seen:", updateError);
         }
+      } else {
+        router.replace("/signin");
       }
     };
     getUser();
@@ -151,7 +268,7 @@ export default function ChatPage() {
     }, 60000); // Update every minute
 
     return () => clearInterval(presenceInterval);
-  }, [supabase, userId]);
+  }, [supabase, userId, router]);
 
   // Load rooms for the logged in user
   useEffect(() => {
@@ -502,6 +619,83 @@ export default function ChatPage() {
     }
   };
 
+  const leaveCurrentRoom = async () => {
+    if (!selectedRoom || !userId) return;
+    try {
+      const { error } = await supabase
+        .from("room_members")
+        .delete()
+        .eq("room_id", selectedRoom.id)
+        .eq("user_id", userId);
+      if (error) throw error;
+      setSelectedRoom(null);
+    } catch (error) {
+      console.error("Leave room error:", error);
+      alert("Failed to leave chat.");
+    }
+  };
+
+  const deleteCurrentRoom = async () => {
+    if (!selectedRoom) return;
+    try {
+      // Only room creator can delete; RLS enforces. We try and show error if not allowed.
+      const { error } = await supabase
+        .from("chat_rooms")
+        .delete()
+        .eq("id", selectedRoom.id);
+      if (error) throw error;
+      setSelectedRoom(null);
+    } catch (error) {
+      console.error("Delete room error:", error);
+      alert("You are not allowed to delete this chat.");
+    }
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    router.replace("/signin");
+  };
+
+  const saveTheme = async (newTheme: Theme) => {
+    if (!userId) return;
+    setTheme(newTheme);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ theme: newTheme as unknown as Record<string, unknown> })
+        .eq("id", userId);
+      if (error) throw error;
+      setShowThemeModal(false);
+    } catch (error) {
+      console.error("Save theme error:", error);
+      alert("Failed to save theme.");
+    }
+  };
+
+  const saveProfile = async () => {
+    if (!userId) return;
+    try {
+      const updates: Record<string, unknown> = {
+        username: editUsername.trim() || null,
+        avatar_url: editAvatarUrl.trim() || null,
+      };
+      const { error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", userId);
+      if (error) throw error;
+      setCurrentProfile((prev) =>
+        prev
+          ? { ...prev, username: updates.username as string, avatar_url: updates.avatar_url as string }
+          : prev,
+      );
+      setShowSettingsModal(false);
+    } catch (error) {
+      console.error("Save profile error:", error);
+      alert("Failed to save profile.");
+    }
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -558,7 +752,7 @@ export default function ChatPage() {
       // Create new DM room
       const { data: newRoom, error: roomError } = await supabase
         .from("chat_rooms")
-        .insert([{ is_group: false }])
+        .insert([{ is_group: false, created_by: userId }])
         .select()
         .single();
 
@@ -600,6 +794,7 @@ export default function ChatPage() {
           {
             name: groupName.trim(),
             is_group: true,
+            created_by: userId,
           },
         ])
         .select()
@@ -657,13 +852,13 @@ export default function ChatPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4"
+      className="min-h-screen flex items-center justify-center p-2 sm:p-4"
       style={{ backgroundColor: theme.colors.primary.light }}
     >
-      <div className="w-full max-w-6xl h-[90vh] flex rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-6xl h-[92vh] sm:h-[90vh] flex rounded-2xl shadow-2xl overflow-hidden">
         {/* Sidebar */}
         <div
-          className="w-1/3 p-6 flex flex-col"
+          className={`${showSidebar ? "flex" : "hidden"} sm:flex sm:w-1/3 w-full p-4 sm:p-6 flex-col`}
           style={{ backgroundColor: theme.colors.primary.dark }}
         >
           {/* Header */}
@@ -686,6 +881,13 @@ export default function ChatPage() {
               </span>
             </div>
             <div className="flex space-x-2">
+              <button onClick={() => setShowSettingsModal(true)} style={{ color: theme.colors.text.light }} title="Settings">
+                <img
+                  src={currentProfile?.avatar_url || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='16' fill='%23ffffff'/></svg>"}
+                  alt="avatar"
+                  className="w-6 h-6 rounded-full"
+                />
+              </button>
               <button
                 onClick={() => {
                   loadAvailableUsers();
@@ -716,8 +918,13 @@ export default function ChatPage() {
                   <Users size={20} />
                 )}
               </button>
-              <button style={{ color: theme.colors.text.light }}>
-                <MoreVertical size={20} />
+              <div className="relative">
+                <button style={{ color: theme.colors.text.light }} onClick={() => setShowThemeModal(true)} title="Appearance">
+                  <Plus size={20} />
+                </button>
+              </div>
+              <button onClick={signOut} style={{ color: theme.colors.text.light }} title="Sign out">
+                <X size={20} />
               </button>
             </div>
           </div>
@@ -734,7 +941,7 @@ export default function ChatPage() {
               rooms.map((room) => (
                 <div
                   key={room.id}
-                  onClick={() => setSelectedRoom(room)}
+                  onClick={() => { setSelectedRoom(room); setShowSidebar(false); }}
                   className={`flex items-center p-3 rounded-xl cursor-pointer transition-colors ${
                     selectedRoom?.id === room.id
                       ? "bg-black bg-opacity-30"
@@ -792,13 +999,29 @@ export default function ChatPage() {
                 <p style={{ color: theme.colors.text.mutedLight }}>
                   No chats yet. Start a conversation!
                 </p>
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => { loadAvailableUsers(); setShowNewChatModal(true); }}
+                    className="px-3 py-2 rounded-lg text-sm"
+                    style={{ backgroundColor: theme.colors.background.white, color: theme.colors.primary.darker }}
+                  >
+                    New Direct Message
+                  </button>
+                  <button
+                    onClick={() => { loadAvailableUsers(); setShowNewGroupModal(true); }}
+                    className="px-3 py-2 rounded-lg text-sm"
+                    style={{ backgroundColor: theme.colors.background.white, color: theme.colors.primary.darker }}
+                  >
+                    Create Group
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </div>
         {/* Main Chat Area */}
         <div
-          className="w-2/3 flex flex-col"
+          className="flex-1 sm:w-2/3 flex flex-col"
           style={{ backgroundColor: theme.colors.primary.light }}
         >
           {/* Chat Header */}
@@ -808,6 +1031,11 @@ export default function ChatPage() {
               style={{ backgroundColor: theme.colors.background.white }}
             >
               <div className="flex items-center">
+                <button className="mr-3 sm:hidden" onClick={() => setShowSidebar(true)} title="Back to chats">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15 18l-6-6 6-6" stroke={theme.colors.text.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
                 <div
                   className="w-12 h-12 rounded-full mr-4 flex items-center justify-center"
                   style={{ backgroundColor: theme.colors.accent.gray }}
@@ -845,29 +1073,63 @@ export default function ChatPage() {
                   </p>
                 </div>
               </div>
-              <div
-                className="flex items-center space-x-2 text-sm"
-                style={{ color: theme.colors.text.muted }}
-              >
+              <div className="flex items-center space-x-2 text-sm" style={{ color: theme.colors.text.muted }}>
                 <Lock size={16} />
-                <span>End-to-end encrypted</span>
-                <MoreVertical size={16} className="cursor-pointer ml-4" />
+                <span>Realtime secure</span>
+                <div className="relative ml-4">
+                  <button title="Chat actions" onClick={() => setShowActionsMenu((s) => !s)}>
+                    <MoreVertical size={16} className="cursor-pointer" />
+                  </button>
+                  {showActionsMenu && (
+                    <div className="absolute right-0 mt-2 w-40 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                      <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100" onClick={() => { setShowActionsMenu(false); leaveCurrentRoom(); }}>
+                        Leave chat
+                      </button>
+                      <button className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600" onClick={() => { setShowActionsMenu(false); deleteCurrentRoom(); }}>
+                        Delete chat
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
             <div
-              className="p-4 flex items-center justify-center h-full"
+              className="p-6 sm:p-10 flex items-center justify-center h-full"
               style={{ backgroundColor: theme.colors.background.chat }}
             >
-              <p style={{ color: theme.colors.text.muted }}>
-                Select a chat to start messaging
-              </p>
+              <div className="text-center max-w-md">
+                <div className="mx-auto mb-6 w-16 h-16 rounded-2xl flex items-center justify-center shadow"
+                  style={{ backgroundColor: theme.colors.background.white }}>
+                  <MessageCircle size={28} style={{ color: theme.colors.primary.darker }} />
+                </div>
+                <h3 className="text-xl font-semibold mb-2" style={{ color: theme.colors.text.dark }}>Welcome to Echo</h3>
+                <p className="text-sm mb-4" style={{ color: theme.colors.text.muted }}>
+                  Start a new conversation or create a group to begin chatting.
+                </p>
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => { loadAvailableUsers(); setShowNewChatModal(true); setShowSidebar(true); }}
+                    className="px-4 py-2 rounded-lg"
+                    style={{ backgroundColor: theme.colors.primary.dark, color: theme.colors.text.light }}
+                  >
+                    New Direct Message
+                  </button>
+                  <button
+                    onClick={() => { loadAvailableUsers(); setShowNewGroupModal(true); setShowSidebar(true); }}
+                    className="px-4 py-2 rounded-lg"
+                    style={{ backgroundColor: theme.colors.background.white, color: theme.colors.primary.darker }}
+                  >
+                    Create Group
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {/* Messages Area */}
           <div
-            className="flex-grow p-6 overflow-y-auto"
-            style={{ backgroundColor: theme.colors.background.chat }}
+            className={`flex-grow ${theme.styleSettings?.compact ? "p-3" : "p-6"} overflow-y-auto`}
+            style={{ backgroundColor: theme.colors.background.chat, backgroundImage: theme.styleSettings?.wallpaper || undefined, backgroundSize: "cover" }}
           >
             {selectedRoom && messagesLoading ? (
               <div className="flex justify-center items-center h-full">
@@ -881,14 +1143,10 @@ export default function ChatPage() {
                 {messages.map((msg) => (
                   <div
                     key={msg.id}
-                    className={`flex mb-4 ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
+                    className={`flex ${theme.styleSettings?.compact ? "mb-2" : "mb-4"} ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`rounded-t-2xl p-4 max-w-md shadow-sm ${
-                        msg.sender_id === userId
-                          ? "rounded-bl-2xl"
-                          : "rounded-br-2xl"
-                      } ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
+                      className={`rounded-t-2xl p-4 max-w-md shadow-sm ${msg.sender_id === userId ? "rounded-bl-2xl" : "rounded-br-2xl"} ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
                       style={{
                         backgroundColor:
                           msg.sender_id === userId
@@ -1157,6 +1415,148 @@ export default function ChatPage() {
                 `Create Group (${selectedUsers.length} members)`
               )}
             </button>
+          </div>
+        </div>
+      )}
+      {/* Theme Modal */}
+      {showThemeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[28rem] max-h-[80vh] overflow-hidden flex flex-col" style={{ backgroundColor: theme.colors.background.white }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold" style={{ color: theme.colors.text.dark }}>
+                Appearance
+              </h3>
+              <button onClick={() => setShowThemeModal(false)}>
+                <X size={20} style={{ color: theme.colors.text.muted }} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {presetThemes.map((p) => (
+                <button
+                  key={p.id}
+                  className="rounded-lg border p-3 text-left hover:shadow"
+                  style={{ borderColor: theme.colors.primary.medium, backgroundColor: p.theme.colors.primary.light }}
+                  onClick={() => saveTheme(p.theme)}
+                >
+                  <div className="h-10 w-full rounded mb-2" style={{ backgroundColor: p.theme.colors.primary.dark }} />
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium" style={{ color: theme.colors.text.dark }}>{p.name}</span>
+                    <span className="text-xs" style={{ color: theme.colors.text.muted }}>Apply</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="space-y-3 overflow-y-auto pr-1">
+              <h4 className="text-sm font-medium" style={{ color: theme.colors.text.muted }}>Custom colors</h4>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  Background
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.primary.light}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, primary: { ...theme.colors.primary, light: e.target.value } } })} />
+                </label>
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  Surface
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.white}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, white: e.target.value } } })} />
+                </label>
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  My bubble
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.primary.dark}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, primary: { ...theme.colors.primary, dark: e.target.value } } })} />
+                </label>
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  Other bubble
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.white}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, white: e.target.value } } })} />
+                </label>
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  Accent
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.accent.blue}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, accent: { ...theme.colors.accent, blue: e.target.value } } })} />
+                </label>
+                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
+                  Chat bg
+                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.chat}
+                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, chat: e.target.value } } })} />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm flex items-center gap-2" style={{ color: theme.colors.text.muted }}>
+                  <input type="checkbox" checked={!!theme.styleSettings?.compact}
+                    onChange={(e) => setTheme({ ...theme, styleSettings: { ...theme.styleSettings, compact: e.target.checked } })} />
+                  Compact mode
+                </label>
+                <label className="text-sm col-span-2" style={{ color: theme.colors.text.muted }}>
+                  Wallpaper (CSS background)
+                  <input
+                    type="text"
+                    placeholder="e.g. linear-gradient(135deg,#e09,#d0e)"
+                    value={theme.styleSettings?.wallpaper ?? ""}
+                    onChange={(e) => setTheme({ ...theme, styleSettings: { ...theme.styleSettings, wallpaper: e.target.value || null } })}
+                    className="mt-1 w-full p-2 rounded border"
+                    style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.dark, backgroundColor: theme.colors.primary.light }}
+                  />
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: theme.colors.primary.medium }}>
+                <button className="px-4 py-2 rounded border" style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.muted }} onClick={() => setTheme(defaultTheme)}>
+                  Reset
+                </button>
+                <button className="px-4 py-2 rounded" style={{ backgroundColor: theme.colors.primary.dark, color: theme.colors.text.light }} onClick={() => saveTheme(theme)}>
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[28rem] max-h-[80vh] overflow-hidden flex flex-col" style={{ backgroundColor: theme.colors.background.white }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold" style={{ color: theme.colors.text.dark }}>
+                Profile
+              </h3>
+              <button onClick={() => setShowSettingsModal(false)}>
+                <X size={20} style={{ color: theme.colors.text.muted }} />
+              </button>
+            </div>
+            <div className="space-y-3 overflow-y-auto pr-1">
+              <div className="flex items-center gap-3">
+                <img src={editAvatarUrl || currentProfile?.avatar_url || "https://api.dicebear.com/9.x/identicon/svg"} alt="avatar" className="w-12 h-12 rounded-full border" style={{ borderColor: theme.colors.primary.medium }} />
+                <div className="flex-1">
+                  <label className="text-sm block mb-1" style={{ color: theme.colors.text.muted }}>Avatar URL</label>
+                  <input
+                    type="url"
+                    placeholder="https://..."
+                    value={editAvatarUrl}
+                    onChange={(e) => setEditAvatarUrl(e.target.value)}
+                    className="w-full p-2 rounded border"
+                    style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.dark, backgroundColor: theme.colors.primary.light }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-sm block mb-1" style={{ color: theme.colors.text.muted }}>Username</label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  className="w-full p-2 rounded border"
+                  style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.dark, backgroundColor: theme.colors.primary.light }}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: theme.colors.primary.medium }}>
+                <button className="px-4 py-2 rounded border" style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.muted }} onClick={() => { setEditUsername(currentProfile?.username || ""); setEditAvatarUrl(currentProfile?.avatar_url || ""); }}>
+                  Reset
+                </button>
+                <button className="px-4 py-2 rounded" style={{ backgroundColor: theme.colors.primary.dark, color: theme.colors.text.light }} onClick={saveProfile}>
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

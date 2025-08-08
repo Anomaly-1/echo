@@ -41,13 +41,8 @@ yarn install
 
 * Create a [Supabase](https://supabase.com) project
 * Enable **Email/Password** auth
-* Create the following tables:
-
-  * `profiles`
-  * `chat_rooms`
-  * `room_members`
-  * `messages`
-* Apply the SQL from `/supabase/schema.sql`
+* Apply the SQL from `supabase/schema.sql` (see below)
+* Optionally run the helper script to set policies and functions automatically (see `scripts/setup_supabase.sql`)
 
 ### 4️⃣ Add Environment Variables
 
@@ -89,7 +84,7 @@ Open [http://localhost:3000](http://localhost:3000) to start chatting.
 ## 🔮 Roadmap
 
 * ✅ Real-time messaging
-* ⏳ End-to-end encryption
+ * ⏳ End-to-end encryption
 * ⏳ File sharing
 * ⏳ Voice messages
 * ⏳ Message reactions
