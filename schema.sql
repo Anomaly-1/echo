@@ -26,6 +26,8 @@ create table if not exists public.room_members (
   room_id uuid references public.chat_rooms(id) on delete cascade,
   user_id uuid references public.profiles(id) on delete cascade,
   created_at timestamptz default now(),
+  last_read_at timestamptz default now(),
+  awaiting boolean default false,
   primary key (room_id, user_id)
 );
 
@@ -64,45 +66,64 @@ create policy "Creator can delete room" on public.chat_rooms
   for delete using (created_by = auth.uid());
 
 -- Room members policies
--- Members can read memberships for rooms they belong to
+-- Users can read memberships for rooms they belong to (simplified to avoid recursion)
 create policy "Members can read memberships" on public.room_members
-  for select using (
-    exists (
-      select 1 from public.room_members rm
-      where rm.room_id = room_members.room_id and rm.user_id = auth.uid()
-    )
-  );
+  for select using (user_id = auth.uid());
 
--- A user can join/leave themselves OR the room creator can manage all memberships
+-- Users can insert themselves into rooms, or room creators can add others
 create policy "Insert memberships" on public.room_members
   for insert with check (
-    user_id = auth.uid() or exists (
+    user_id = auth.uid() or 
+    exists (
       select 1 from public.chat_rooms cr
       where cr.id = room_id and cr.created_by = auth.uid()
     )
   );
 
+-- Users can delete their own memberships, or room creators can remove others
 create policy "Delete memberships" on public.room_members
   for delete using (
-    user_id = auth.uid() or exists (
+    user_id = auth.uid() or 
+    exists (
+      select 1 from public.chat_rooms cr
+      where cr.id = room_id and cr.created_by = auth.uid()
+    )
+  );
+
+-- Users can update their own row (e.g., last_read_at / awaiting), or room creators can update all
+create policy "Update memberships" on public.room_members
+  for update using (
+    user_id = auth.uid() or 
+    exists (
+      select 1 from public.chat_rooms cr
+      where cr.id = room_id and cr.created_by = auth.uid()
+    )
+  ) with check (
+    user_id = auth.uid() or 
+    exists (
       select 1 from public.chat_rooms cr
       where cr.id = room_id and cr.created_by = auth.uid()
     )
   );
 
 -- Messages policies
+-- Users can read messages from rooms they're members of
 create policy "Members can read messages" on public.messages
   for select using (
     exists (
-      select 1 from public.room_members rm where rm.room_id = messages.room_id and rm.user_id = auth.uid()
+      select 1 from public.room_members rm 
+      where rm.room_id = messages.room_id and rm.user_id = auth.uid()
     )
   );
 
+-- Users can send messages to rooms they're members of
 create policy "Members can send messages" on public.messages
   for insert with check (
+    sender_id = auth.uid() and
     exists (
-      select 1 from public.room_members rm where rm.room_id = messages.room_id and rm.user_id = auth.uid()
-    ) and sender_id = auth.uid()
+      select 1 from public.room_members rm 
+      where rm.room_id = messages.room_id and rm.user_id = auth.uid()
+    )
   );
 
 -- Realtime

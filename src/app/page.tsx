@@ -1,17 +1,19 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import {
-  Send,
-  MoreVertical,
-  Lock,
-  Diamond,
-  Plus,
-  Users,
-  MessageCircle,
-  Search,
-  X,
-  Loader2,
-} from "lucide-react";
+  IoSend,
+  IoEllipsisVertical,
+  IoLockClosed,
+  IoEllipse,
+  IoBrush,
+  IoPeople,
+  IoChatbubbleEllipses,
+  IoSearch,
+  IoClose,
+  IoChevronBack,
+  IoMenu,
+  IoSettingsOutline,
+} from "react-icons/io5";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
 
@@ -47,6 +49,20 @@ type Theme = {
     wallpaper?: string | null;
   };
 };
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return m
+    ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) }
+    : null;
+}
+
+function getBrightness(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 255;
+  // Perceived brightness
+  return Math.round((rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000);
+}
 
 const defaultTheme: Theme = {
   colors: {
@@ -87,50 +103,68 @@ const presetThemes: Array<{ id: string; name: string; theme: Theme }> = [
     theme: defaultTheme,
   },
   {
-    id: "ocean",
-    name: "Ocean",
+    id: "earth",
+    name: "Earth Tones",
     theme: {
       colors: {
-        primary: { light: "#ECFEFF", medium: "#CFFAFE", dark: "#0E7490", darker: "#155E75" },
-        text: { light: "#FFFFFF", dark: "#0F172A", muted: "#64748B", mutedLight: "#94A3B8" },
-        accent: { blue: "#0284C7", green: "#14B8A6", gray: "#6B7280", red: "#EF4444" },
-        background: { chat: "#F0FDFA", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+        primary: { light: "#F7F2EE", medium: "#DDE7CC", dark: "#5C4033", darker: "#3F2F21" },
+        text: { light: "#FFFFFF", dark: "#2B2A28", muted: "#6B6156", mutedLight: "#9B8F82" },
+        accent: { blue: "#E69D6C", green: "#A3B18A", gray: "#7D7461", red: "#B85C38" },
+        background: { chat: "#FBF7F3", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
       },
     },
   },
   {
-    id: "emerald",
-    name: "Emerald",
+    id: "sea",
+    name: "Sea",
     theme: {
       colors: {
-        primary: { light: "#ECFDF5", medium: "#D1FAE5", dark: "#065F46", darker: "#064E3B" },
-        text: { light: "#FFFFFF", dark: "#052e24", muted: "#6B7280", mutedLight: "#9CA3AF" },
-        accent: { blue: "#10B981", green: "#34D399", gray: "#6B7280", red: "#EF4444" },
-        background: { chat: "#F0FDF4", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+        primary: { light: "#E6FFFA", medium: "#B2F5EA", dark: "#0D9488", darker: "#0F766E" },
+        text: { light: "#FFFFFF", dark: "#013A38", muted: "#4B7F7B", mutedLight: "#88B9B6" },
+        accent: { blue: "#2DD4BF", green: "#14B8A6", gray: "#6B7280", red: "#EF4444" },
+        background: { chat: "#ECFEFF", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
       },
     },
   },
   {
-    id: "violet",
-    name: "Violet",
+    id: "dark",
+    name: "Dark",
     theme: {
       colors: {
-        primary: { light: "#F5F3FF", medium: "#EDE9FE", dark: "#4C1D95", darker: "#3B0764" },
-        text: { light: "#FFFFFF", dark: "#1F2937", muted: "#6B7280", mutedLight: "#A1A1AA" },
-        accent: { blue: "#7C3AED", green: "#10B981", gray: "#6B7280", red: "#EF4444" },
-        background: { chat: "#FAF5FF", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+        primary: { light: "#0B0F14", medium: "#111827", dark: "#0F172A", darker: "#0B1220" },
+        text: { light: "#E5E7EB", dark: "#E5E7EB", muted: "#9CA3AF", mutedLight: "#6B7280" },
+        accent: { blue: "#3B82F6", green: "#10B981", gray: "#6B7280", red: "#EF4444" },
+        background: { chat: "#111827", white: "#0F172A", overlay: "rgba(255,255,255,.08)" },
+      },
+      styleSettings: { compact: false, wallpaper: null },
+    },
+  },
+  {
+    id: "light",
+    name: "Light",
+    theme: defaultTheme,
+  },
+  {
+    id: "solarized-red",
+    name: "Solarized Red",
+    theme: {
+      colors: {
+        primary: { light: "#FDF6E3", medium: "#EEE8D5", dark: "#CB4B16", darker: "#B13612" },
+        text: { light: "#FFFFFF", dark: "#073642", muted: "#657B83", mutedLight: "#93A1A1" },
+        accent: { blue: "#CB4B16", green: "#859900", gray: "#6B7280", red: "#DC322F" },
+        background: { chat: "#FDF6E3", white: "#FFFFFF", overlay: "rgba(0,0,0,.1)" },
       },
     },
   },
   {
-    id: "rose",
-    name: "Rose",
+    id: "solarized-blue",
+    name: "Solarized Blue",
     theme: {
       colors: {
-        primary: { light: "#FFF1F2", medium: "#FFE4E6", dark: "#9F1239", darker: "#881337" },
-        text: { light: "#FFFFFF", dark: "#1F2937", muted: "#6B7280", mutedLight: "#9CA3AF" },
-        accent: { blue: "#FB7185", green: "#10B981", gray: "#6B7280", red: "#DC2626" },
-        background: { chat: "#FFF1F2", white: "#FFFFFF", overlay: "rgba(0,0,0,.3)" },
+        primary: { light: "#FDF6E3", medium: "#EEE8D5", dark: "#268BD2", darker: "#1E6CA8" },
+        text: { light: "#FFFFFF", dark: "#073642", muted: "#657B83", mutedLight: "#93A1A1" },
+        accent: { blue: "#268BD2", green: "#2AA198", gray: "#6B7280", red: "#DC322F" },
+        background: { chat: "#FDF6E3", white: "#FFFFFF", overlay: "rgba(0,0,0,.1)" },
       },
     },
   },
@@ -151,6 +185,7 @@ interface Room {
   created_at: string;
   other_user?: Profile;
   member_count?: number;
+  awaiting?: boolean;
 }
 
 interface Message {
@@ -184,6 +219,7 @@ export default function ChatPage() {
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<Profile[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
@@ -192,7 +228,16 @@ export default function ChatPage() {
   const [editUsername, setEditUsername] = useState("");
   const [editAvatarUrl, setEditAvatarUrl] = useState("");
 
+  const MESSAGE_MAX_LENGTH = 500;
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const PAGE_SIZE = 20;
+  const [oldestMessageAt, setOldestMessageAt] = useState<string | null>(null);
+  const [hasMoreOlder, setHasMoreOlder] = useState<boolean>(true);
+  const [loadingOlder, setLoadingOlder] = useState<boolean>(false);
+
+  const isDarkUI = getBrightness(theme.colors.background.white) < 140;
 
   // Keep track of subscription channels to properly clean them up
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -270,6 +315,13 @@ export default function ChatPage() {
     return () => clearInterval(presenceInterval);
   }, [supabase, userId, router]);
 
+  // Hide sidebar by default on small screens
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (window.innerWidth < 768) setShowSidebar(false);
+    }
+  }, []);
+
   // Load rooms for the logged in user
   useEffect(() => {
     if (!userId) return;
@@ -318,30 +370,39 @@ export default function ChatPage() {
                 member_count: count || 0,
               };
             } else {
-              // For direct messages, get the other user's info
-              const { data: otherMember, error: memberError } = await supabase
-                .from("room_members")
-                .select(
-                  `
-                  user_id,
-                  profiles (
-                    id,
-                    username,
-                    avatar_url,
-                    last_seen
-                  )
-                `,
-                )
-                .eq("room_id", room.id)
-                .neq("user_id", userId) // Get the *other* user
-                .single();
+              // For direct messages, find the other user's id, then fetch their profile
+              let otherUserId: string | undefined;
+              try {
+                const { data: otherRows, error: otherIdErr } = await supabase
+                  .from("room_members")
+                  .select("user_id")
+                  .eq("room_id", room.id)
+                  .neq("user_id", userId)
+                  .limit(1);
+                if (otherIdErr) throw otherIdErr;
+                otherUserId = otherRows && otherRows.length > 0 ? otherRows[0].user_id : undefined;
+              } catch (e) {
+                console.error("Error fetching other user id:", e);
+              }
 
-              if (memberError)
-                console.error("Error fetching other user:", memberError);
+              let otherProfile: Profile | undefined;
+              if (otherUserId) {
+                try {
+                  const { data: prof, error: profErr } = await supabase
+                    .from("profiles")
+                    .select("id, username, avatar_url, last_seen")
+                    .eq("id", otherUserId)
+                    .single();
+                  if (profErr) throw profErr;
+                  otherProfile = prof as unknown as Profile;
+                } catch (e) {
+                  console.error("Error fetching other user profile:", e);
+                }
+              }
 
               return {
                 ...room,
-                other_user: otherMember?.profiles,
+                other_user: otherProfile,
               };
             }
           }),
@@ -437,7 +498,7 @@ export default function ChatPage() {
             content,
             created_at,
             sender_id,
-            profiles!messages_sender_id_fkey (
+            profiles:profiles!messages_sender_id_fkey (
               id,
               username,
               avatar_url
@@ -445,22 +506,28 @@ export default function ChatPage() {
           `,
           )
           .eq("room_id", selectedRoom.id)
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: false })
+          .limit(PAGE_SIZE);
 
         if (error) throw error;
 
         if (data) {
-          const typedMessages = data.map((msg) => ({
+          const typedDesc = data.map((msg) => ({
             ...msg,
             profiles: Array.isArray(msg.profiles)
               ? msg.profiles[0]
               : msg.profiles,
           })) as Message[];
-          setMessages(typedMessages);
+          const typedAsc = [...typedDesc].reverse();
+          setMessages(typedAsc);
+          setOldestMessageAt(typedAsc[0]?.created_at || null);
+          setHasMoreOlder((data?.length || 0) === PAGE_SIZE);
         }
       } catch (error) {
         console.error("Error loading messages:", error);
         setMessages([]);
+        setOldestMessageAt(null);
+        setHasMoreOlder(false);
       } finally {
         setMessagesLoading(false);
         setTimeout(scrollToBottom, 100);
@@ -497,7 +564,7 @@ export default function ChatPage() {
               content,
               created_at,
               sender_id,
-              profiles!messages_sender_id_fkey (
+              profiles:profiles!messages_sender_id_fkey (
                 id,
                 username,
                 avatar_url
@@ -577,8 +644,19 @@ export default function ChatPage() {
 
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedRoom || !userId) return;
+    if (message.length > MESSAGE_MAX_LENGTH) {
+      alert(`Message too long. Max ${MESSAGE_MAX_LENGTH} characters.`);
+      return;
+    }
+    // Minimal rate limit: 1 message per 800ms
+    const now = Date.now();
+    if (now - lastSentAt < 800) {
+      alert("You're sending messages too quickly. Please slow down.");
+      return;
+    }
+    setLastSentAt(now);
 
-    const messageContent = message.trim();
+    const messageContent = sanitizeMessage(message.trim());
     const tempId = `temp-${Date.now()}-${Math.random()}`;
 
     const tempMessage: Message = {
@@ -608,6 +686,28 @@ export default function ChatPage() {
         .single();
 
       if (error) throw error;
+
+      // Set awaiting=true for all other members in this room
+      try {
+        const { data: members } = await supabase
+          .from("room_members")
+          .select("user_id")
+          .eq("room_id", selectedRoom.id);
+        const others = (members || []).filter((m: any) => m.user_id !== userId);
+        if (others.length > 0) {
+          await Promise.all(
+            others.map((m: any) =>
+              supabase
+                .from("room_members")
+                .update({ awaiting: true })
+                .eq("room_id", selectedRoom.id)
+                .eq("user_id", m.user_id),
+            ),
+          );
+        }
+      } catch (e) {
+        console.error("Failed to set awaiting:", e);
+      }
 
       // The real-time subscription will handle adding the actual message
       // and removing the temporary one
@@ -838,6 +938,23 @@ export default function ChatPage() {
     return new Date(lastSeen) > fiveMinutesAgo;
   };
 
+  // Clear awaiting when opening a room (mark as seen)
+  useEffect(() => {
+    const markRead = async () => {
+      if (!selectedRoom || !userId) return;
+      try {
+        await supabase
+          .from("room_members")
+          .update({ awaiting: false, last_read_at: new Date().toISOString() })
+          .eq("room_id", selectedRoom.id)
+          .eq("user_id", userId);
+      } catch (e) {
+        console.error("Failed to mark read:", e);
+      }
+    };
+    markRead();
+  }, [selectedRoom, userId, supabase]);
+
   // Cleanup all subscriptions on component unmount
   useEffect(() => {
     return () => {
@@ -850,92 +967,121 @@ export default function ChatPage() {
     };
   }, [supabase]);
 
+  // Simple rate limit and spam filter
+  const [lastSentAt, setLastSentAt] = useState<number>(0);
+
+  const sanitizeMessage = (content: string): string => {
+    const patterns: Array<[RegExp, string]> = [
+      [/\bf+u+c*k+\b/gi, "duck"],
+      [/\bwtf\b/gi, "what the duck"],
+      [/\bfk\b/gi, "duck"],
+    ];
+    let sanitized = content;
+    for (const [re, repl] of patterns) sanitized = sanitized.replace(re, repl);
+    return sanitized;
+  };
+
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-2 sm:p-4"
+      className="min-h-screen h-screen w-screen"
       style={{ backgroundColor: theme.colors.primary.light }}
     >
-      <div className="w-full max-w-6xl h-[92vh] sm:h-[90vh] flex rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full h-full flex relative">
         {/* Sidebar */}
+        {/* Backdrop on small screens when sidebar open */}
+        {showSidebar && (
+          <div className="md:hidden fixed inset-0 z-30" style={{ background: theme.colors.background.overlay }} onClick={() => setShowSidebar(false)} />
+        )}
         <div
-          className={`${showSidebar ? "flex" : "hidden"} sm:flex sm:w-1/3 w-full p-4 sm:p-6 flex-col`}
-          style={{ backgroundColor: theme.colors.primary.dark }}
+          className={`${showSidebar ? "flex" : "hidden"} md:flex md:relative md:z-0 md:w-1/3 lg:w-1/4 w-3/4 max-w-xs p-3 sm:p-4 flex-col border-r ${showSidebar ? "fixed md:static z-40 h-full" : ""}`}
+          style={{ backgroundColor: theme.colors.primary.dark, borderColor: theme.colors.primary.medium }}
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center">
-              <div
-                className="w-10 h-10 rounded-full mr-3 flex items-center justify-center"
-                style={{ backgroundColor: theme.colors.background.white }}
-              >
-                <MessageCircle
-                  size={20}
-                  style={{ color: theme.colors.primary.dark }}
-                />
-              </div>
-              <span
-                className="font-bold text-xl"
+            <div className="flex items-center relative">
+              <button
+                type="button"
+                onClick={() => setShowSidebar((s) => !s)}
+                title="Toggle sidebar"
+                className="mr-2 hover:opacity-80 active:scale-[.98] transition cursor-pointer md:hidden"
                 style={{ color: theme.colors.text.light }}
               >
+                <IoMenu size={18} />
+              </button>
+              <button
+                type="button"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full mr-3 flex items-center justify-center hover:opacity-90 active:scale-[.98] transition cursor-pointer"
+                style={{ backgroundColor: theme.colors.background.white }}
+                onClick={() => setShowHeaderMenu((v) => !v)}
+                title="Chat menu"
+              >
+                <IoChatbubbleEllipses size={18} style={{ color: isDarkUI ? theme.colors.text.dark : theme.colors.primary.dark }} />
+              </button>
+              <span className="font-bold text-lg sm:text-xl" style={{ color: theme.colors.text.light }}>
                 Chats
               </span>
-            </div>
-            <div className="flex space-x-2">
-              <button onClick={() => setShowSettingsModal(true)} style={{ color: theme.colors.text.light }} title="Settings">
-                <img
-                  src={currentProfile?.avatar_url || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='16' fill='%23ffffff'/></svg>"}
-                  alt="avatar"
-                  className="w-6 h-6 rounded-full"
-                />
-              </button>
-              <button
-                onClick={() => {
-                  loadAvailableUsers();
-                  setShowNewChatModal(true);
-                }}
-                style={{ color: theme.colors.text.light }}
-                title="New Direct Message"
-                disabled={roomsLoading}
-              >
-                {roomsLoading ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <MessageCircle size={20} />
-                )}
-              </button>
-              <button
-                onClick={() => {
-                  loadAvailableUsers();
-                  setShowNewGroupModal(true);
-                }}
-                style={{ color: theme.colors.text.light }}
-                title="New Group Chat"
-                disabled={roomsLoading}
-              >
-                {roomsLoading ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <Users size={20} />
-                )}
-              </button>
-              <div className="relative">
-                <button style={{ color: theme.colors.text.light }} onClick={() => setShowThemeModal(true)} title="Appearance">
-                  <Plus size={20} />
-                </button>
-              </div>
-              <button onClick={signOut} style={{ color: theme.colors.text.light }} title="Sign out">
-                <X size={20} />
-              </button>
+              {showHeaderMenu && (
+                <div className="absolute top-12 left-0 z-20 rounded-xl shadow-lg p-4 w-64 sm:w-72"
+                  style={{ backgroundColor: theme.colors.background.white }}>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="flex flex-col items-center">
+                      <button title="New DM" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.primary.darker }}
+                        onClick={() => { setShowHeaderMenu(false); loadAvailableUsers(); setShowNewChatModal(true); }}>
+                        <IoChatbubbleEllipses />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>New DM</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <button title="Create Group" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.primary.darker }}
+                        onClick={() => { setShowHeaderMenu(false); loadAvailableUsers(); setShowNewGroupModal(true); }}>
+                        <IoPeople />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>Group</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <button title="Appearance" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.primary.darker }}
+                        onClick={() => { setShowHeaderMenu(false); console.log("Theme brush button clicked"); setShowThemeModal(true); }}>
+                        <IoBrush />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>Appearance</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <button title="Settings" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.primary.darker }}
+                        onClick={() => { setShowHeaderMenu(false); setShowSettingsModal(true); }}>
+                        <IoSettingsOutline />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>Settings</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <button title="Sign out" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.accent.red }}
+                        onClick={() => { setShowHeaderMenu(false); signOut(); }}>
+                        <IoClose />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>Sign out</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           {/* Rooms List */}
-          <div className="flex-grow overflow-y-auto -mr-6 pr-4 space-y-2">
+          <div className="flex-grow overflow-y-auto -mr-3 pr-2 space-y-2">
             {roomsLoading ? (
-              <div className="flex justify-center items-center h-full">
-                <Loader2
-                  className="animate-spin"
-                  style={{ color: theme.colors.text.light }}
-                />
+              <div className="flex flex-col gap-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="flex items-center p-3 rounded-xl">
+                    <div className="w-10 h-10 rounded-full mr-4 animate-pulse" style={{ backgroundColor: theme.colors.text.mutedLight }} />
+                    <div className="flex-1">
+                      <div className="h-3 w-1/2 mb-2 rounded animate-pulse" style={{ backgroundColor: theme.colors.text.mutedLight }} />
+                      <div className="h-2 w-1/3 rounded animate-pulse" style={{ backgroundColor: theme.colors.text.mutedLight }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : rooms.length > 0 ? (
               rooms.map((room) => (
@@ -948,20 +1094,13 @@ export default function ChatPage() {
                       : "hover:bg-black hover:bg-opacity-10"
                   }`}
                 >
-                  <div
-                    className="w-10 h-10 rounded-full mr-4 flex items-center justify-center"
-                    style={{ backgroundColor: theme.colors.accent.gray }}
-                  >
+                  <div className="w-10 h-10 rounded-full mr-4 flex items-center justify-center overflow-hidden" style={{ backgroundColor: theme.colors.accent.gray }}>
                     {room.is_group ? (
-                      <Users
-                        size={16}
-                        style={{ color: theme.colors.text.light }}
-                      />
+                      <IoPeople size={16} style={{ color: theme.colors.text.light }} />
+                    ) : room.other_user?.avatar_url ? (
+                      <img src={room.other_user.avatar_url} alt="avatar" className="w-10 h-10 object-cover" />
                     ) : (
-                      <div
-                        className="w-6 h-6 rounded-full"
-                        style={{ backgroundColor: theme.colors.text.light }}
-                      />
+                      <div className="w-6 h-6 rounded-full" style={{ backgroundColor: theme.colors.text.light }} />
                     )}
                   </div>
                   <div className="flex-grow min-w-0">
@@ -982,16 +1121,25 @@ export default function ChatPage() {
                       </p>
                     )}
                   </div>
-                  <Diamond
-                    size={8}
-                    style={{
-                      color: room.is_group
-                        ? theme.colors.accent.blue
-                        : isUserOnline(room.other_user?.last_seen)
-                          ? theme.colors.accent.green
-                          : theme.colors.text.mutedLight,
-                    }}
-                  />
+                  {/* Online indicator + awaiting badge */}
+                  <div className="relative flex items-center">
+                    <IoEllipse
+                      size={14}
+                      style={{
+                        color: room.is_group
+                          ? theme.colors.accent.blue
+                          : isUserOnline(room.other_user?.last_seen)
+                            ? theme.colors.accent.green
+                            : theme.colors.text.mutedLight,
+                      }}
+                    />
+                    {room.awaiting && (
+                      <span className="ml-2 text-[10px] px-2 h-[16px] rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: theme.colors.accent.red, color: theme.colors.text.light }}>
+                        New
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))
             ) : (
@@ -1021,40 +1169,41 @@ export default function ChatPage() {
         </div>
         {/* Main Chat Area */}
         <div
-          className="flex-1 sm:w-2/3 flex flex-col"
+          className="flex-1 flex flex-col"
           style={{ backgroundColor: theme.colors.primary.light }}
         >
           {/* Chat Header */}
           {selectedRoom ? (
             <div
-              className="p-4 flex items-center justify-between shadow-sm"
-              style={{ backgroundColor: theme.colors.background.white }}
+              className="p-3 sm:p-4 flex items-center justify-between shadow-sm border-b"
+              style={{ backgroundColor: theme.colors.background.white, borderColor: theme.colors.primary.medium }}
             >
               <div className="flex items-center">
-                <button className="mr-3 sm:hidden" onClick={() => setShowSidebar(true)} title="Back to chats">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M15 18l-6-6 6-6" stroke={theme.colors.text.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
+                {!showSidebar && (
+                  <button className="mr-3" onClick={() => setShowSidebar(true)} title="Open chats">
+                    <IoMenu size={20} style={{ color: theme.colors.text.muted }} />
+                  </button>
+                )}
                 <div
-                  className="w-12 h-12 rounded-full mr-4 flex items-center justify-center"
+                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-full mr-4 flex items-center justify-center"
                   style={{ backgroundColor: theme.colors.accent.gray }}
                 >
                   {selectedRoom.is_group ? (
-                    <Users
+                    <IoPeople
                       size={20}
                       style={{ color: theme.colors.text.light }}
                     />
                   ) : (
-                    <div
-                      className="w-8 h-8 rounded-full"
-                      style={{ backgroundColor: theme.colors.text.light }}
-                    />
+                    selectedRoom.other_user?.avatar_url ? (
+                      <img src={selectedRoom.other_user.avatar_url} alt="avatar" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full" style={{ backgroundColor: theme.colors.text.light }} />
+                    )
                   )}
                 </div>
                 <div>
                   <h2
-                    className="font-bold text-lg truncate max-w-xs"
+                    className="font-bold text-base sm:text-lg truncate max-w-xs"
                     style={{ color: theme.colors.text.dark }}
                   >
                     {selectedRoom.is_group
@@ -1062,7 +1211,7 @@ export default function ChatPage() {
                       : selectedRoom.other_user?.username || "Unknown User"}
                   </h2>
                   <p
-                    className="text-sm"
+                    className="text-xs sm:text-sm"
                     style={{ color: theme.colors.text.muted }}
                   >
                     {selectedRoom.is_group
@@ -1074,11 +1223,11 @@ export default function ChatPage() {
                 </div>
               </div>
               <div className="flex items-center space-x-2 text-sm" style={{ color: theme.colors.text.muted }}>
-                <Lock size={16} />
-                <span>Realtime secure</span>
-                <div className="relative ml-4">
+                <IoLockClosed size={16} />
+                <span className="hidden sm:inline">Realtime secure</span>
+                <div className="relative ml-2 sm:ml-4">
                   <button title="Chat actions" onClick={() => setShowActionsMenu((s) => !s)}>
-                    <MoreVertical size={16} className="cursor-pointer" />
+                    <IoEllipsisVertical size={18} className="cursor-pointer" />
                   </button>
                   {showActionsMenu && (
                     <div className="absolute right-0 mt-2 w-40 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
@@ -1101,7 +1250,7 @@ export default function ChatPage() {
               <div className="text-center max-w-md">
                 <div className="mx-auto mb-6 w-16 h-16 rounded-2xl flex items-center justify-center shadow"
                   style={{ backgroundColor: theme.colors.background.white }}>
-                  <MessageCircle size={28} style={{ color: theme.colors.primary.darker }} />
+                  <IoChatbubbleEllipses size={28} style={{ color: theme.colors.primary.darker }} />
                 </div>
                 <h3 className="text-xl font-semibold mb-2" style={{ color: theme.colors.text.dark }}>Welcome to Echo</h3>
                 <p className="text-sm mb-4" style={{ color: theme.colors.text.muted }}>
@@ -1129,14 +1278,19 @@ export default function ChatPage() {
           {/* Messages Area */}
           <div
             className={`flex-grow ${theme.styleSettings?.compact ? "p-3" : "p-6"} overflow-y-auto`}
+            ref={messagesContainerRef}
             style={{ backgroundColor: theme.colors.background.chat, backgroundImage: theme.styleSettings?.wallpaper || undefined, backgroundSize: "cover" }}
           >
             {selectedRoom && messagesLoading ? (
-              <div className="flex justify-center items-center h-full">
-                <Loader2
-                  className="animate-spin"
-                  style={{ color: theme.colors.text.muted }}
-                />
+              <div className="flex flex-col gap-3">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className={`flex ${i % 2 === 0 ? "justify-start" : "justify-end"}`}>
+                    <div className="flex items-end gap-2">
+                      <div className="w-6 h-6 rounded-full animate-pulse" style={{ backgroundColor: theme.colors.text.mutedLight }} />
+                      <div className="rounded-2xl p-4 w-56 animate-pulse" style={{ backgroundColor: theme.colors.background.white }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : selectedRoom ? (
               <>
@@ -1145,47 +1299,65 @@ export default function ChatPage() {
                     key={msg.id}
                     className={`flex ${theme.styleSettings?.compact ? "mb-2" : "mb-4"} ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
                   >
-                    <div
-                      className={`rounded-t-2xl p-4 max-w-md shadow-sm ${msg.sender_id === userId ? "rounded-bl-2xl" : "rounded-br-2xl"} ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
-                      style={{
-                        backgroundColor:
-                          msg.sender_id === userId
-                            ? theme.colors.primary.dark
-                            : theme.colors.background.white,
-                      }}
-                    >
-                      {msg.sender_id !== userId && selectedRoom.is_group && (
+                    <div className={`flex items-end gap-2 ${msg.sender_id === userId ? "flex-row-reverse" : ""}`}>
+                      {/* Avatar next to each message */}
+                      <div className="w-6 h-6 rounded-full overflow-hidden" style={{ backgroundColor: theme.colors.accent.gray }}>
+                        {msg.sender_id === userId ? (
+                          currentProfile?.avatar_url ? (
+                            <img src={currentProfile.avatar_url} alt="me" className="w-6 h-6 object-cover" />
+                          ) : (
+                            <div className="w-6 h-6" style={{ backgroundColor: theme.colors.text.light }} />
+                          )
+                        ) : msg.profiles?.avatar_url ? (
+                          <img src={msg.profiles.avatar_url} alt={msg.profiles.username} className="w-6 h-6 object-cover" />
+                        ) : (
+                          <div className="w-6 h-6" style={{ backgroundColor: theme.colors.text.light }} />
+                        )}
+                      </div>
+
+                      <div
+                        className={`rounded-t-2xl p-4 max-w-md shadow-sm ${msg.sender_id === userId ? "rounded-bl-2xl" : "rounded-br-2xl"} ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
+                        style={{
+                          backgroundColor:
+                            msg.sender_id === userId
+                              ? theme.colors.primary.dark
+                              : theme.colors.background.white,
+                        }}
+                      >
+                        {msg.sender_id !== userId && selectedRoom.is_group && (
+                          <p
+                            className="text-xs font-semibold mb-1 truncate max-w-[200px]"
+                            style={{ color: theme.colors.accent.blue }}
+                          >
+                            {msg.profiles.username}
+                          </p>
+                        )}
                         <p
-                          className="text-xs font-semibold mb-1 truncate max-w-[200px]"
-                          style={{ color: theme.colors.accent.blue }}
+                          style={{
+                            color:
+                              msg.sender_id === userId
+                                ? theme.colors.text.light
+                                : theme.colors.text.dark,
+                          }}
+                          className="break-words whitespace-pre-wrap"
                         >
-                          {msg.profiles.username}
+                          {msg.content}
                         </p>
-                      )}
-                      <p
-                        style={{
-                          color:
-                            msg.sender_id === userId
-                              ? theme.colors.text.light
-                              : theme.colors.text.dark,
-                        }}
-                      >
-                        {msg.content}
-                      </p>
-                      <span
-                        className="text-xs float-right mt-1"
-                        style={{
-                          color:
-                            msg.sender_id === userId
-                              ? theme.colors.text.mutedLight
-                              : theme.colors.text.muted,
-                        }}
-                      >
-                        {new Date(msg.created_at).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
+                        <span
+                          className="text-xs float-right mt-1"
+                          style={{
+                            color:
+                              msg.sender_id === userId
+                                ? theme.colors.text.mutedLight
+                                : theme.colors.text.muted,
+                          }}
+                        >
+                          {new Date(msg.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1196,7 +1368,7 @@ export default function ChatPage() {
           {/* Message Input */}
           {selectedRoom && (
             <div
-              className="p-4 border-t"
+              className="p-3 sm:p-4 border-t"
               style={{
                 backgroundColor: theme.colors.background.white,
                 borderTopColor: theme.colors.primary.medium,
@@ -1208,6 +1380,7 @@ export default function ChatPage() {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyPress={handleKeyPress}
+                  maxLength={MESSAGE_MAX_LENGTH}
                   className="flex-grow rounded-full p-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   style={{
                     backgroundColor: theme.colors.primary.medium,
@@ -1216,6 +1389,9 @@ export default function ChatPage() {
                   placeholder="Type a message..."
                   disabled={!selectedRoom}
                 />
+                <div className="text-xs" style={{ color: theme.colors.text.muted }}>
+                  {message.length}/{MESSAGE_MAX_LENGTH}
+                </div>
                 <button
                   onClick={handleSendMessage}
                   className="p-3 rounded-full hover:opacity-80 transition-opacity disabled:opacity-50"
@@ -1223,9 +1399,9 @@ export default function ChatPage() {
                     backgroundColor: theme.colors.primary.dark,
                     color: theme.colors.text.light,
                   }}
-                  disabled={!message.trim() || !selectedRoom}
+                  disabled={!message.trim() || !selectedRoom || message.length > MESSAGE_MAX_LENGTH}
                 >
-                  <Send size={20} />
+                  <IoSend size={20} />
                 </button>
               </div>
             </div>
@@ -1250,22 +1426,22 @@ export default function ChatPage() {
                 onClick={() => setShowNewChatModal(false)}
                 disabled={creatingDM}
               >
-                <X size={20} style={{ color: theme.colors.text.muted }} />
+                <IoClose size={20} style={{ color: theme.colors.text.muted }} />
               </button>
             </div>
             <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style={{
-                  backgroundColor: theme.colors.primary.light,
-                  borderColor: theme.colors.primary.medium,
-                  color: theme.colors.text.dark,
-                }}
-              />
+              <div className="flex items-center gap-2 w-full p-2 border rounded-lg"
+                style={{ backgroundColor: theme.colors.primary.light, borderColor: theme.colors.primary.medium }}>
+                <IoSearch size={18} style={{ color: theme.colors.text.muted }} />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full focus:outline-none"
+                  style={{ color: theme.colors.text.dark, backgroundColor: "transparent" }}
+                />
+              </div>
             </div>
             <div className="flex-grow overflow-y-auto min-h-0">
               {filteredUsers.length > 0 ? (
@@ -1325,7 +1501,7 @@ export default function ChatPage() {
                 onClick={() => setShowNewGroupModal(false)}
                 disabled={creatingGroup}
               >
-                <X size={20} style={{ color: theme.colors.text.muted }} />
+                <IoClose size={20} style={{ color: theme.colors.text.muted }} />
               </button>
             </div>
             <div className="mb-4">
@@ -1342,19 +1518,19 @@ export default function ChatPage() {
                 }}
                 disabled={creatingGroup}
               />
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style={{
-                  backgroundColor: theme.colors.primary.light,
-                  borderColor: theme.colors.primary.medium,
-                  color: theme.colors.text.dark,
-                }}
-                disabled={creatingGroup}
-              />
+              <div className="flex items-center gap-2 w-full p-2 border rounded-lg"
+                style={{ backgroundColor: theme.colors.primary.light, borderColor: theme.colors.primary.medium }}>
+                <IoSearch size={18} style={{ color: theme.colors.text.muted }} />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full focus:outline-none"
+                  style={{ color: theme.colors.text.dark, backgroundColor: "transparent" }}
+                  disabled={creatingGroup}
+                />
+              </div>
             </div>
             <div className="flex-grow overflow-y-auto mb-4 min-h-0">
               {filteredUsers.length > 0 ? (
@@ -1407,106 +1583,11 @@ export default function ChatPage() {
               }}
             >
               {creatingGroup ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
+                <>Creating...</>
               ) : (
                 `Create Group (${selectedUsers.length} members)`
               )}
             </button>
-          </div>
-        </div>
-      )}
-      {/* Theme Modal */}
-      {showThemeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-[28rem] max-h-[80vh] overflow-hidden flex flex-col" style={{ backgroundColor: theme.colors.background.white }}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold" style={{ color: theme.colors.text.dark }}>
-                Appearance
-              </h3>
-              <button onClick={() => setShowThemeModal(false)}>
-                <X size={20} style={{ color: theme.colors.text.muted }} />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              {presetThemes.map((p) => (
-                <button
-                  key={p.id}
-                  className="rounded-lg border p-3 text-left hover:shadow"
-                  style={{ borderColor: theme.colors.primary.medium, backgroundColor: p.theme.colors.primary.light }}
-                  onClick={() => saveTheme(p.theme)}
-                >
-                  <div className="h-10 w-full rounded mb-2" style={{ backgroundColor: p.theme.colors.primary.dark }} />
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium" style={{ color: theme.colors.text.dark }}>{p.name}</span>
-                    <span className="text-xs" style={{ color: theme.colors.text.muted }}>Apply</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="space-y-3 overflow-y-auto pr-1">
-              <h4 className="text-sm font-medium" style={{ color: theme.colors.text.muted }}>Custom colors</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  Background
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.primary.light}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, primary: { ...theme.colors.primary, light: e.target.value } } })} />
-                </label>
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  Surface
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.white}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, white: e.target.value } } })} />
-                </label>
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  My bubble
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.primary.dark}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, primary: { ...theme.colors.primary, dark: e.target.value } } })} />
-                </label>
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  Other bubble
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.white}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, white: e.target.value } } })} />
-                </label>
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  Accent
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.accent.blue}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, accent: { ...theme.colors.accent, blue: e.target.value } } })} />
-                </label>
-                <label className="text-sm" style={{ color: theme.colors.text.muted }}>
-                  Chat bg
-                  <input type="color" className="block w-full h-10 rounded" value={theme.colors.background.chat}
-                    onChange={(e) => setTheme({ ...theme, colors: { ...theme.colors, background: { ...theme.colors.background, chat: e.target.value } } })} />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-sm flex items-center gap-2" style={{ color: theme.colors.text.muted }}>
-                  <input type="checkbox" checked={!!theme.styleSettings?.compact}
-                    onChange={(e) => setTheme({ ...theme, styleSettings: { ...theme.styleSettings, compact: e.target.checked } })} />
-                  Compact mode
-                </label>
-                <label className="text-sm col-span-2" style={{ color: theme.colors.text.muted }}>
-                  Wallpaper (CSS background)
-                  <input
-                    type="text"
-                    placeholder="e.g. linear-gradient(135deg,#e09,#d0e)"
-                    value={theme.styleSettings?.wallpaper ?? ""}
-                    onChange={(e) => setTheme({ ...theme, styleSettings: { ...theme.styleSettings, wallpaper: e.target.value || null } })}
-                    className="mt-1 w-full p-2 rounded border"
-                    style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.dark, backgroundColor: theme.colors.primary.light }}
-                  />
-                </label>
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: theme.colors.primary.medium }}>
-                <button className="px-4 py-2 rounded border" style={{ borderColor: theme.colors.primary.medium, color: theme.colors.text.muted }} onClick={() => setTheme(defaultTheme)}>
-                  Reset
-                </button>
-                <button className="px-4 py-2 rounded" style={{ backgroundColor: theme.colors.primary.dark, color: theme.colors.text.light }} onClick={() => saveTheme(theme)}>
-                  Save
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -1520,7 +1601,7 @@ export default function ChatPage() {
                 Profile
               </h3>
               <button onClick={() => setShowSettingsModal(false)}>
-                <X size={20} style={{ color: theme.colors.text.muted }} />
+                <IoClose size={20} style={{ color: theme.colors.text.muted }} />
               </button>
             </div>
             <div className="space-y-3 overflow-y-auto pr-1">
@@ -1556,6 +1637,40 @@ export default function ChatPage() {
                   Save
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Theme Modal */}
+      {showThemeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[28rem] max-h-[80vh] overflow-hidden flex flex-col" style={{ backgroundColor: theme.colors.background.white }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold" style={{ color: theme.colors.text.dark }}>
+                Appearance
+              </h3>
+              <button onClick={() => setShowThemeModal(false)} className="hover:opacity-80 transition" title="Close">
+                <IoClose size={20} style={{ color: theme.colors.text.muted }} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {presetThemes.map((p) => (
+                <button
+                  key={p.id}
+                  className="rounded-lg border p-3 text-left hover:shadow transition"
+                  style={{ borderColor: theme.colors.primary.medium, backgroundColor: p.theme.colors.primary.light }}
+                  onClick={() => saveTheme(p.theme)}
+                >
+                  <div className="h-10 w-full rounded mb-2" style={{ backgroundColor: p.theme.colors.primary.dark }} />
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium" style={{ color: theme.colors.text.dark }}>{p.name}</span>
+                    <span className="text-xs" style={{ color: theme.colors.text.muted }}>Apply</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="text-xs" style={{ color: theme.colors.text.muted }}>
+              More customization coming soon.
             </div>
           </div>
         </div>
