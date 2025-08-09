@@ -693,9 +693,11 @@ export default function ChatPage() {
           .from("room_members")
           .select("user_id")
           .eq("room_id", selectedRoom.id);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const others = (members || []).filter((m: any) => m.user_id !== userId);
         if (others.length > 0) {
           await Promise.all(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             others.map((m: any) =>
               supabase
                 .from("room_members")
