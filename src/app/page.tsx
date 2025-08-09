@@ -371,7 +371,6 @@ export default function ChatPage() {
 
               // Use awaiting from membership row for current user
               const awaiting = !!membership.awaiting;
-              console.log("room awaiting (group)", room.id, { awaiting });
 
               return {
                 ...room,
@@ -411,7 +410,6 @@ export default function ChatPage() {
 
               // Use awaiting from membership row for current user
               const awaiting = !!membership.awaiting;
-              console.log("room awaiting (dm)", room.id, { awaiting });
 
               return {
                 ...room,
@@ -805,8 +803,6 @@ export default function ChatPage() {
             return offline;
           });
 
-          console.log("Setting awaiting for offline members:", targets.map((t: any) => t.user_id));
-
           await Promise.all(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             targets.map((m: any) =>
@@ -825,7 +821,6 @@ export default function ChatPage() {
             .eq("room_id", selectedRoom.id);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const others = (members || []).filter((m: any) => m.user_id !== userId);
-          console.log("Setting awaiting for DM other:", others.map((t: any) => t.user_id));
           await Promise.all(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             others.map((m: any) =>
@@ -1080,7 +1075,6 @@ export default function ChatPage() {
           .update({ awaiting: false, last_read_at: new Date().toISOString() })
           .eq("room_id", selectedRoom.id)
           .eq("user_id", userId);
-        console.log("Cleared awaiting for room", selectedRoom.id, "user", userId);
         // Patch local state immediately to avoid waiting for realtime
         setRooms((prev) => prev.map((r) => (r.id === selectedRoom.id ? { ...r, awaiting: false } : r)));
       } catch (e) {
