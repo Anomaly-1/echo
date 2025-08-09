@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   IoSend,
   IoEllipsisVertical,
@@ -13,6 +13,8 @@ import {
   IoChevronBack,
   IoMenu,
   IoSettingsOutline,
+  IoPersonCircle,
+  IoLogoGithub,
 } from "react-icons/io5";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
@@ -232,6 +234,7 @@ export default function ChatPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
   const PAGE_SIZE = 20;
   const [oldestMessageAt, setOldestMessageAt] = useState<string | null>(null);
   const [hasMoreOlder, setHasMoreOlder] = useState<boolean>(true);
@@ -334,6 +337,7 @@ export default function ChatPage() {
           .select(
             `
             room_id,
+            awaiting,
             chat_rooms (
               id,
               name,
@@ -365,9 +369,14 @@ export default function ChatPage() {
               if (countError)
                 console.error("Error fetching member count:", countError);
 
+              // Use awaiting from membership row for current user
+              const awaiting = !!membership.awaiting;
+              console.log("room awaiting (group)", room.id, { awaiting });
+
               return {
                 ...room,
                 member_count: count || 0,
+                awaiting,
               };
             } else {
               // For direct messages, find the other user's id, then fetch their profile
@@ -400,9 +409,14 @@ export default function ChatPage() {
                 }
               }
 
+              // Use awaiting from membership row for current user
+              const awaiting = !!membership.awaiting;
+              console.log("room awaiting (dm)", room.id, { awaiting });
+
               return {
                 ...room,
                 other_user: otherProfile,
+                awaiting,
               };
             }
           }),
@@ -461,6 +475,22 @@ export default function ChatPage() {
         (payload) => {
           console.log("Room membership removed:", payload);
           loadRooms();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "room_members",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          console.log("Room membership updated (local patch):", payload);
+          const updated = payload.new as { room_id: string; awaiting?: boolean };
+          setRooms((prev) =>
+            prev.map((r) => (r.id === updated.room_id ? { ...r, awaiting: !!updated.awaiting } : r)),
+          );
         },
       )
       .subscribe((status) => {
@@ -621,6 +651,70 @@ export default function ChatPage() {
     };
   }, [selectedRoom, supabase]);
 
+  const loadOlderMessages = React.useCallback(async () => {
+    if (!selectedRoom || !oldestMessageAt || loadingOlder || !hasMoreOlder) return;
+    setLoadingOlder(true);
+    const el = messagesContainerRef.current;
+    const prevScrollHeight = el?.scrollHeight || 0;
+    const prevScrollTop = el?.scrollTop || 0;
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(
+          `
+          id,
+          content,
+          created_at,
+          sender_id,
+          profiles:profiles!messages_sender_id_fkey (
+            id,
+            username,
+            avatar_url
+          )
+        `,
+        )
+        .eq("room_id", selectedRoom.id)
+        .lt("created_at", oldestMessageAt)
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+      if (error) throw error;
+      const olderDesc = (data || []).map((msg) => ({
+        ...msg,
+        profiles: Array.isArray(msg.profiles) ? msg.profiles[0] : msg.profiles,
+      })) as Message[];
+      const olderAsc = [...olderDesc].reverse();
+      setMessages((prev) => [...olderAsc, ...prev]);
+      if (olderAsc.length > 0) setOldestMessageAt(olderAsc[0].created_at);
+      if ((data?.length || 0) < PAGE_SIZE) setHasMoreOlder(false);
+    } catch (e) {
+      console.error("Load older messages failed:", e);
+      setHasMoreOlder(false);
+    } finally {
+      setLoadingOlder(false);
+      setTimeout(() => {
+        const el2 = messagesContainerRef.current;
+        if (!el2) return;
+        const newScrollHeight = el2.scrollHeight;
+        el2.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+      }, 0);
+    }
+  }, [selectedRoom, oldestMessageAt, loadingOlder, hasMoreOlder, supabase]);
+
+  // IntersectionObserver to trigger loading older messages when top sentinel is visible
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          void loadOlderMessages();
+        }
+      }
+    }, { root: messagesContainerRef.current, threshold: 0.1 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadOlderMessages]);
+
   // Auto-scroll when messages change
   useEffect(() => {
     scrollToBottom();
@@ -689,13 +783,49 @@ export default function ChatPage() {
 
       // Set awaiting=true for all other members in this room
       try {
-        const { data: members } = await supabase
-          .from("room_members")
-          .select("user_id")
-          .eq("room_id", selectedRoom.id);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const others = (members || []).filter((m: any) => m.user_id !== userId);
-        if (others.length > 0) {
+        if (selectedRoom.is_group) {
+          // For groups: set awaiting only for members who are NOT online
+          const { data: membersWithPresence } = await supabase
+            .from("room_members")
+            .select(
+              `
+              user_id,
+              profiles:profiles!room_members_user_id_fkey (
+                last_seen
+              )
+            `,
+            )
+            .eq("room_id", selectedRoom.id);
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const targets = (membersWithPresence || []).filter((m: any) => {
+            if (m.user_id === userId) return false;
+            const ls = Array.isArray(m.profiles) ? m.profiles[0]?.last_seen : m.profiles?.last_seen;
+            const offline = !ls || !isUserOnline(ls as string);
+            return offline;
+          });
+
+          console.log("Setting awaiting for offline members:", targets.map((t: any) => t.user_id));
+
+          await Promise.all(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            targets.map((m: any) =>
+              supabase
+                .from("room_members")
+                .update({ awaiting: true })
+                .eq("room_id", selectedRoom.id)
+                .eq("user_id", m.user_id),
+            ),
+          );
+        } else {
+          // For DMs: always set awaiting for the other user
+          const { data: members } = await supabase
+            .from("room_members")
+            .select("user_id")
+            .eq("room_id", selectedRoom.id);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const others = (members || []).filter((m: any) => m.user_id !== userId);
+          console.log("Setting awaiting for DM other:", others.map((t: any) => t.user_id));
           await Promise.all(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             others.map((m: any) =>
@@ -950,6 +1080,9 @@ export default function ChatPage() {
           .update({ awaiting: false, last_read_at: new Date().toISOString() })
           .eq("room_id", selectedRoom.id)
           .eq("user_id", userId);
+        console.log("Cleared awaiting for room", selectedRoom.id, "user", userId);
+        // Patch local state immediately to avoid waiting for realtime
+        setRooms((prev) => prev.map((r) => (r.id === selectedRoom.id ? { ...r, awaiting: false } : r)));
       } catch (e) {
         console.error("Failed to mark read:", e);
       }
@@ -977,6 +1110,7 @@ export default function ChatPage() {
       [/\bf+u+c*k+\b/gi, "duck"],
       [/\bwtf\b/gi, "what the duck"],
       [/\bfk\b/gi, "duck"],
+      [/\btf\b/gi, "the duck"],
     ];
     let sanitized = content;
     for (const [re, repl] of patterns) sanitized = sanitized.replace(re, repl);
@@ -1066,6 +1200,14 @@ export default function ChatPage() {
                       </button>
                       <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>Sign out</span>
                     </div>
+                    <div className="flex flex-col items-center">
+                      <button title="Repository" className="w-12 h-12 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                        style={{ backgroundColor: isDarkUI ? "rgba(255,255,255,0.08)" : theme.colors.primary.light, color: isDarkUI ? theme.colors.text.light : theme.colors.primary.darker }}
+                        onClick={() => { setShowHeaderMenu(false); window.open("https://github.com/Anomaly-1/echo", "_blank", "noopener,noreferrer"); }}>
+                        <IoLogoGithub />
+                      </button>
+                      <span className="mt-1 text-xs" style={{ color: theme.colors.text.muted }}>GitHub</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1102,7 +1244,7 @@ export default function ChatPage() {
                     ) : room.other_user?.avatar_url ? (
                       <img src={room.other_user.avatar_url} alt="avatar" className="w-10 h-10 object-cover" />
                     ) : (
-                      <div className="w-6 h-6 rounded-full" style={{ backgroundColor: theme.colors.text.light }} />
+                      <IoPersonCircle size={22} style={{ color: theme.colors.text.light }} />
                     )}
                   </div>
                   <div className="flex-grow min-w-0">
@@ -1182,7 +1324,7 @@ export default function ChatPage() {
             >
               <div className="flex items-center">
                 {!showSidebar && (
-                  <button className="mr-3" onClick={() => setShowSidebar(true)} title="Open chats">
+                  <button className="mr-3 md:hidden" onClick={() => setShowSidebar(true)} title="Open chats">
                     <IoMenu size={20} style={{ color: theme.colors.text.muted }} />
                   </button>
                 )}
@@ -1199,7 +1341,7 @@ export default function ChatPage() {
                     selectedRoom.other_user?.avatar_url ? (
                       <img src={selectedRoom.other_user.avatar_url} alt="avatar" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover" />
                     ) : (
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full" style={{ backgroundColor: theme.colors.text.light }} />
+                      <IoPersonCircle size={22} style={{ color: theme.colors.text.light }} />
                     )
                   )}
                 </div>
@@ -1235,9 +1377,6 @@ export default function ChatPage() {
                     <div className="absolute right-0 mt-2 w-40 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
                       <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100" onClick={() => { setShowActionsMenu(false); leaveCurrentRoom(); }}>
                         Leave chat
-                      </button>
-                      <button className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600" onClick={() => { setShowActionsMenu(false); deleteCurrentRoom(); }}>
-                        Delete chat
                       </button>
                     </div>
                   )}
@@ -1284,84 +1423,97 @@ export default function ChatPage() {
             style={{ backgroundColor: theme.colors.background.chat, backgroundImage: theme.styleSettings?.wallpaper || undefined, backgroundSize: "cover" }}
           >
             {selectedRoom && messagesLoading ? (
-              <div className="flex flex-col gap-3">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className={`flex ${i % 2 === 0 ? "justify-start" : "justify-end"}`}>
-                    <div className="flex items-end gap-2">
-                      <div className="w-6 h-6 rounded-full animate-pulse" style={{ backgroundColor: theme.colors.text.mutedLight }} />
-                      <div className="rounded-2xl p-4 w-56 animate-pulse" style={{ backgroundColor: theme.colors.background.white }} />
-                    </div>
-                  </div>
-                ))}
+              <div className="flex justify-center items-center h-full">
+                <span className="animate-spin" style={{ color: theme.colors.text.muted }}>●</span>
               </div>
             ) : selectedRoom ? (
               <>
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${theme.styleSettings?.compact ? "mb-2" : "mb-4"} ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
-                  >
-                    <div className={`flex items-end gap-2 ${msg.sender_id === userId ? "flex-row-reverse" : ""}`}>
-                      {/* Avatar next to each message */}
-                      <div className="w-6 h-6 rounded-full overflow-hidden" style={{ backgroundColor: theme.colors.accent.gray }}>
-                        {msg.sender_id === userId ? (
-                          currentProfile?.avatar_url ? (
-                            <img src={currentProfile.avatar_url} alt="me" className="w-6 h-6 object-cover" />
-                          ) : (
-                            <div className="w-6 h-6" style={{ backgroundColor: theme.colors.text.light }} />
-                          )
-                        ) : msg.profiles?.avatar_url ? (
-                          <img src={msg.profiles.avatar_url} alt={msg.profiles.username} className="w-6 h-6 object-cover" />
-                        ) : (
-                          <div className="w-6 h-6" style={{ backgroundColor: theme.colors.text.light }} />
-                        )}
-                      </div>
-
-                      <div
-                        className={`rounded-t-2xl p-4 max-w-md shadow-sm ${msg.sender_id === userId ? "rounded-bl-2xl" : "rounded-br-2xl"} ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
-                        style={{
-                          backgroundColor:
-                            msg.sender_id === userId
-                              ? theme.colors.primary.dark
-                              : theme.colors.background.white,
-                        }}
-                      >
-                        {msg.sender_id !== userId && selectedRoom.is_group && (
-                          <p
-                            className="text-xs font-semibold mb-1 truncate max-w-[200px]"
-                            style={{ color: theme.colors.accent.blue }}
-                          >
-                            {msg.profiles.username}
-                          </p>
-                        )}
-                        <p
-                          style={{
-                            color:
-                              msg.sender_id === userId
-                                ? theme.colors.text.light
-                                : theme.colors.text.dark,
-                          }}
-                          className="break-words whitespace-pre-wrap"
-                        >
-                          {msg.content}
-                        </p>
-                        <span
-                          className="text-xs float-right mt-1"
-                          style={{
-                            color:
-                              msg.sender_id === userId
-                                ? theme.colors.text.mutedLight
-                                : theme.colors.text.muted,
-                          }}
-                        >
-                          {new Date(msg.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                <div ref={topSentinelRef} />
+                {messages.map((msg, idx) => (
+                  theme.styleSettings?.compact ? (
+                    <div key={msg.id} className="mb-1">
+                      {selectedRoom.is_group && msg.sender_id !== userId && (
+                        <span className="text-xs font-semibold mr-2" style={{ color: theme.colors.accent.blue }}>
+                          {msg.profiles.username}
                         </span>
+                      )}
+                      <span
+                        className="text-sm break-words whitespace-pre-wrap"
+                        style={{ color: isDarkUI ? theme.colors.text.light : theme.colors.text.dark }}
+                      >
+                        {msg.content}
+                      </span>
+                      <span className="text-[10px] ml-2" style={{ color: theme.colors.text.muted }}>
+                        {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                  ) : (
+                    <div
+                      key={msg.id}
+                      className={`flex ${theme.styleSettings?.compact ? "mb-2" : "mb-4"} ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}
+                    >
+                      <div className={`flex items-end gap-2 ${msg.sender_id === userId ? "flex-row-reverse" : ""}`}>
+                        {/* Avatar next to each message */}
+                        <div className="w-6 h-6 rounded-full overflow-hidden flex items-center justify-center" style={{ backgroundColor: theme.colors.accent.gray }}>
+                          {msg.sender_id === userId ? (
+                            currentProfile?.avatar_url ? (
+                              <img src={currentProfile.avatar_url} alt="me" className="w-6 h-6 object-cover" />
+                            ) : (
+                              <IoPersonCircle size={16} style={{ color: theme.colors.text.light }} />
+                            )
+                          ) : msg.profiles?.avatar_url ? (
+                            <img src={msg.profiles.avatar_url} alt={msg.profiles.username} className="w-6 h-6 object-cover" />
+                          ) : (
+                            <IoPersonCircle size={16} style={{ color: theme.colors.text.light }} />
+                          )}
+                        </div>
+
+                        <div
+                          className={`rounded-t-2xl p-4 max-w-md shadow-sm ${msg.sender_id === userId ? "rounded-bl-2xl" : "rounded-br-2xl"} ${msg.id.startsWith("temp-") ? "opacity-70" : ""}`}
+                          style={{
+                            backgroundColor:
+                              msg.sender_id === userId
+                                ? theme.colors.primary.dark
+                                : theme.colors.background.white,
+                          }}
+                        >
+                          {msg.sender_id !== userId && selectedRoom.is_group && (
+                            <p
+                              className="text-xs font-semibold mb-1 truncate max-w-[200px]"
+                              style={{ color: theme.colors.accent.blue }}
+                            >
+                              {msg.profiles.username}
+                            </p>
+                          )}
+                          <p
+                            style={{
+                              color:
+                                msg.sender_id === userId
+                                  ? theme.colors.text.light
+                                  : theme.colors.text.dark,
+                            }}
+                            className="break-words whitespace-pre-wrap"
+                          >
+                            {msg.content}
+                          </p>
+                          <span
+                            className="text-xs float-right mt-1"
+                            style={{
+                              color:
+                                msg.sender_id === userId
+                                  ? theme.colors.text.mutedLight
+                                  : theme.colors.text.muted,
+                            }}
+                          >
+                            {new Date(msg.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )
                 ))}
                 <div ref={messagesEndRef} />
               </>
@@ -1671,8 +1823,25 @@ export default function ChatPage() {
                 </button>
               ))}
             </div>
-            <div className="text-xs" style={{ color: theme.colors.text.muted }}>
-              More customization coming soon.
+            <div className="flex items-center justify-between mt-1 pt-3 border-t" style={{ borderColor: theme.colors.primary.medium }}>
+              <div>
+                <div className="text-sm font-medium" style={{ color: theme.colors.text.dark }}>Compact mode</div>
+                <div className="text-xs" style={{ color: theme.colors.text.muted }}>Discord-like: no avatars, no bubbles</div>
+              </div>
+              <label className="inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={!!theme.styleSettings?.compact}
+                  onChange={(e) => {
+                    const updated = { ...theme, styleSettings: { ...theme.styleSettings, compact: e.target.checked } };
+                    saveTheme(updated);
+                  }}
+                />
+                <div className="w-10 h-5 bg-gray-300 peer-checked:bg-blue-500 rounded-full relative transition">
+                  <div className="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 peer-checked:translate-x-5 transition" />
+                </div>
+              </label>
             </div>
           </div>
         </div>
