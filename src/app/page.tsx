@@ -219,12 +219,14 @@ export default function ChatPage() {
   // Modal states
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showNewGroupModal, setShowNewGroupModal] = useState(false);
+  const [showAddUsersModal, setShowAddUsersModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<Profile[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [usersToAdd, setUsersToAdd] = useState<string[]>([]);
   const [groupName, setGroupName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [editUsername, setEditUsername] = useState("");
@@ -326,118 +328,120 @@ export default function ChatPage() {
   }, []);
 
   // Load rooms for the logged in user
+  const loadRooms = async () => {
+    if (!userId) return;
+    
+    setRoomsLoading(true);
+    try {
+      const { data: roomMemberships, error } = await supabase
+        .from("room_members")
+        .select(
+          `
+          room_id,
+          awaiting,
+          chat_rooms (
+            id,
+            name,
+            is_group,
+            created_at
+          )
+        `,
+        )
+        .eq("user_id", userId);
+
+      if (error) throw error;
+
+      if (!roomMemberships) {
+        setRooms([]);
+        return;
+      }
+
+      const roomsWithDetails = await Promise.all(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        roomMemberships.map(async (membership: any) => {
+          const room = membership.chat_rooms;
+          if (room.is_group) {
+            // For group chats, get member count
+            const { count, error: countError } = await supabase
+              .from("room_members")
+              .select("*", { count: "exact", head: true })
+              .eq("room_id", room.id);
+
+            if (countError)
+              console.error("Error fetching member count:", countError);
+
+            // Use awaiting from membership row for current user
+            const awaiting = !!membership.awaiting;
+
+            return {
+              ...room,
+              member_count: count || 0,
+              awaiting,
+            };
+          } else {
+            // For direct messages, find the other user's id, then fetch their profile
+            let otherUserId: string | undefined;
+            try {
+              const { data: otherRows, error: otherIdErr } = await supabase
+                .from("room_members")
+                .select("user_id")
+                .eq("room_id", room.id)
+                .neq("user_id", userId)
+                .limit(1);
+              if (otherIdErr) throw otherIdErr;
+              otherUserId = otherRows && otherRows.length > 0 ? otherRows[0].user_id : undefined;
+            } catch (e) {
+              console.error("Error fetching other user id:", e);
+            }
+
+            let otherProfile: Profile | undefined;
+            if (otherUserId) {
+              try {
+                const { data: prof, error: profErr } = await supabase
+                  .from("profiles")
+                  .select("id, username, avatar_url, last_seen")
+                  .eq("id", otherUserId)
+                  .single();
+                if (profErr) throw profErr;
+                otherProfile = prof as unknown as Profile;
+              } catch (e) {
+                console.error("Error fetching other user profile:", e);
+              }
+            }
+
+            // Use awaiting from membership row for current user
+            const awaiting = !!membership.awaiting;
+
+            return {
+              ...room,
+              other_user: otherProfile,
+              awaiting,
+            };
+          }
+        }),
+      );
+
+      // Sort rooms by latest message
+      const sortedRooms = [...roomsWithDetails].sort((a, b) => {
+        return (
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+      });
+
+      setRooms(sortedRooms);
+      if (sortedRooms.length > 0 && !selectedRoom) {
+        setSelectedRoom(sortedRooms[0]);
+      }
+    } catch (error) {
+      console.error("Error loading rooms:", error);
+      setRooms([]);
+    } finally {
+      setRoomsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!userId) return;
-
-    const loadRooms = async () => {
-      setRoomsLoading(true);
-      try {
-        const { data: roomMemberships, error } = await supabase
-          .from("room_members")
-          .select(
-            `
-            room_id,
-            awaiting,
-            chat_rooms (
-              id,
-              name,
-              is_group,
-              created_at
-            )
-          `,
-          )
-          .eq("user_id", userId);
-
-        if (error) throw error;
-
-        if (!roomMemberships) {
-          setRooms([]);
-          return;
-        }
-
-        const roomsWithDetails = await Promise.all(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          roomMemberships.map(async (membership: any) => {
-            const room = membership.chat_rooms;
-            if (room.is_group) {
-              // For group chats, get member count
-              const { count, error: countError } = await supabase
-                .from("room_members")
-                .select("*", { count: "exact", head: true })
-                .eq("room_id", room.id);
-
-              if (countError)
-                console.error("Error fetching member count:", countError);
-
-              // Use awaiting from membership row for current user
-              const awaiting = !!membership.awaiting;
-
-              return {
-                ...room,
-                member_count: count || 0,
-                awaiting,
-              };
-            } else {
-              // For direct messages, find the other user's id, then fetch their profile
-              let otherUserId: string | undefined;
-              try {
-                const { data: otherRows, error: otherIdErr } = await supabase
-                  .from("room_members")
-                  .select("user_id")
-                  .eq("room_id", room.id)
-                  .neq("user_id", userId)
-                  .limit(1);
-                if (otherIdErr) throw otherIdErr;
-                otherUserId = otherRows && otherRows.length > 0 ? otherRows[0].user_id : undefined;
-              } catch (e) {
-                console.error("Error fetching other user id:", e);
-              }
-
-              let otherProfile: Profile | undefined;
-              if (otherUserId) {
-                try {
-                  const { data: prof, error: profErr } = await supabase
-                    .from("profiles")
-                    .select("id, username, avatar_url, last_seen")
-                    .eq("id", otherUserId)
-                    .single();
-                  if (profErr) throw profErr;
-                  otherProfile = prof as unknown as Profile;
-                } catch (e) {
-                  console.error("Error fetching other user profile:", e);
-                }
-              }
-
-              // Use awaiting from membership row for current user
-              const awaiting = !!membership.awaiting;
-
-              return {
-                ...room,
-                other_user: otherProfile,
-                awaiting,
-              };
-            }
-          }),
-        );
-
-        // Sort rooms by latest message
-        const sortedRooms = [...roomsWithDetails].sort((a, b) => {
-          return (
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-        });
-
-        setRooms(sortedRooms);
-        if (sortedRooms.length > 0 && !selectedRoom) {
-          setSelectedRoom(sortedRooms[0]);
-        }
-      } catch (error) {
-        console.error("Error loading rooms:", error);
-        setRooms([]);
-      } finally {
-        setRoomsLoading(false);
-      }
-    };
 
     loadRooms();
 
@@ -730,7 +734,23 @@ export default function ChatPage() {
       console.error("Error loading users:", error);
       setAvailableUsers([]);
     } else {
-      setAvailableUsers(data || []);
+      // If we're adding users to an existing group, filter out users already in the group
+      if (showAddUsersModal && selectedRoom?.is_group) {
+        const { data: existingMembers, error: membersError } = await supabase
+          .from("room_members")
+          .select("user_id")
+          .eq("room_id", selectedRoom.id);
+        
+        if (!membersError && existingMembers) {
+          const existingUserIds = existingMembers.map(m => m.user_id);
+          const filteredUsers = data.filter(user => !existingUserIds.includes(user.id));
+          setAvailableUsers(filteredUsers || []);
+        } else {
+          setAvailableUsers(data || []);
+        }
+      } else {
+        setAvailableUsers(data || []);
+      }
     }
   };
 
@@ -1055,7 +1075,41 @@ export default function ChatPage() {
     }
   };
 
+  const addUsersToGroup = async () => {
+    if (!selectedRoom || !userId || usersToAdd.length === 0) return;
+
+    try {
+      // Add selected users to the room_members table
+      const memberInserts = usersToAdd.map((uId) => ({
+        room_id: selectedRoom.id,
+        user_id: uId,
+      }));
+
+      const { error: membersError } = await supabase
+        .from("room_members")
+        .insert(memberInserts);
+
+      if (membersError) throw membersError;
+
+      // Refresh the room to get updated member count
+      await loadRooms();
+      
+      // Clear the form and close modal
+      setUsersToAdd([]);
+      setShowAddUsersModal(false);
+      
+      alert("Users added successfully!");
+    } catch (error) {
+      console.error("Error adding users to group:", error);
+      alert("Failed to add users. Please try again.");
+    }
+  };
+
   const filteredUsers = availableUsers.filter((user) =>
+    user.username.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  const filteredUsersForAdd = availableUsers.filter((user) =>
     user.username.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
@@ -1369,6 +1423,20 @@ export default function ChatPage() {
                   </button>
                   {showActionsMenu && (
                     <div className="absolute right-0 mt-2 w-40 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                      {selectedRoom.is_group && (
+                        <button 
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100" 
+                          onClick={() => { 
+                            setShowActionsMenu(false); 
+                            setUsersToAdd([]);
+                            setSearchQuery("");
+                            loadAvailableUsers(); 
+                            setShowAddUsersModal(true); 
+                          }}
+                        >
+                          Add Users
+                        </button>
+                      )}
                       <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100" onClick={() => { setShowActionsMenu(false); leaveCurrentRoom(); }}>
                         Leave chat
                       </button>
@@ -1681,8 +1749,8 @@ export default function ChatPage() {
               </div>
             </div>
             <div className="flex-grow overflow-y-auto mb-4 min-h-0">
-              {filteredUsers.length > 0 ? (
-                filteredUsers.map((user) => (
+              {filteredUsersForAdd.length > 0 ? (
+                filteredUsersForAdd.map((user) => (
                   <div
                     key={user.id}
                     onClick={() => {
@@ -1837,6 +1905,98 @@ export default function ChatPage() {
                 </div>
               </label>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Users Modal */}
+      {showAddUsersModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div
+            className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-hidden flex flex-col"
+            style={{ backgroundColor: theme.colors.background.white }}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3
+                className="text-lg font-semibold"
+                style={{ color: theme.colors.text.dark }}
+              >
+                Add Users to Group
+              </h3>
+              <button
+                onClick={() => {
+                  setShowAddUsersModal(false);
+                  setUsersToAdd([]);
+                  setSearchQuery("");
+                }}
+              >
+                <IoClose size={20} style={{ color: theme.colors.text.muted }} />
+              </button>
+            </div>
+            <div className="mb-4">
+              <div className="flex items-center gap-2 w-full p-2 border rounded-lg"
+                style={{ backgroundColor: theme.colors.primary.light, borderColor: theme.colors.primary.medium }}>
+                <IoSearch size={18} style={{ color: theme.colors.text.muted }} />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full focus:outline-none"
+                  style={{ color: theme.colors.text.dark, backgroundColor: "transparent" }}
+                />
+              </div>
+            </div>
+            <div className="flex-grow overflow-y-auto mb-4 min-h-0">
+              {filteredUsersForAdd.length > 0 ? (
+                filteredUsersForAdd.map((user) => (
+                  <div
+                    key={user.id}
+                    onClick={() => {
+                      setUsersToAdd((prev) =>
+                        prev.includes(user.id)
+                          ? prev.filter((id) => id !== user.id)
+                          : [...prev, user.id],
+                      );
+                    }}
+                    className={`flex items-center p-2 rounded cursor-pointer ${
+                      usersToAdd.includes(user.id)
+                        ? "bg-blue-100"
+                        : "hover:bg-gray-100"
+                    }`}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-full mr-3 flex items-center justify-center"
+                      style={{ backgroundColor: theme.colors.accent.gray }}
+                    >
+                      <div
+                        className="w-5 h-5 rounded-full"
+                        style={{ backgroundColor: theme.colors.text.light }}
+                      />
+                    </div>
+                    <p
+                      className="truncate"
+                      style={{ color: theme.colors.text.dark }}
+                    >
+                      {user.username}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-center text-gray-500 py-4">No users found</p>
+              )}
+            </div>
+            <button
+              onClick={addUsersToGroup}
+              disabled={usersToAdd.length === 0}
+              className="w-full p-2 rounded-lg disabled:opacity-50 flex items-center justify-center"
+              style={{
+                backgroundColor: theme.colors.primary.dark,
+                color: theme.colors.text.light,
+              }}
+            >
+              Add {usersToAdd.length} User{usersToAdd.length !== 1 ? 's' : ''} to Group
+            </button>
           </div>
         </div>
       )}
